@@ -2,6 +2,7 @@ import json
 import random
 import faker
 import os
+import pandas as pd
 
 
 try:
@@ -132,3 +133,20 @@ def start_or_get_spark(
 
     spark_opts.append("getOrCreate()")
     return eval(".".join(spark_opts))
+
+def save_csv_arrays_from_json(json_file):
+    with open(json_file, "r", encoding="utf-8") as f:
+        data = json.load(f)  # Load JSON as dictionary
+        
+    for key, value in data.items():
+        if isinstance(value, list): 
+            df = pd.DataFrame(value) 
+            csv_file = f"{key}.csv" 
+            df.to_csv(csv_file, index=False) 
+            print(f"Saved {csv_file}")
+
+def load_spark_df(spark, csv_file, size=None, schema=None):
+    df = spark.read.csv(csv_file, header=True, schema=schema)
+    if size:
+        df = df.limit(size)
+    return df
