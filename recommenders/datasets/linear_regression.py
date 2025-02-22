@@ -4,6 +4,7 @@ from collections import defaultdict
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+from datetime import date
 
 USER_COL_NAME = 'UserId'
 PRODUCT_COL_NAME = 'ProductId'
@@ -16,45 +17,44 @@ CLICKED_COL_NAME = 'Clicked'
 def save_rating_values():
     ratings = load_csv_list("../../recommenders/datasets/pa/ratings.csv")
 
-    header = ratings[0]
-    USER_COL = header.index(USER_COL_NAME)
-    PRODUCT_COL = header.index(PRODUCT_COL_NAME)
-    RATING_COL = header.index(RATING_COL_NAME)
-    BOUGHT_COL = header.index(BOUGHT_COL_NAME)
-    PUT_IN_CART_COL = header.index(PUT_IN_CART_COL_NAME)
-    PUT_IN_FAVORITE_COL = header.index(PUT_IN_FAVORITE_COL_NAME)
-    CLICKED_COL = header.index(CLICKED_COL_NAME)
-
     pivot_data = defaultdict(dict)
 
     for row in ratings[1:]:
-        userId = row[USER_COL]
-        productId = row[PRODUCT_COL]
+        userId = row[USER_COL_NAME]
+        productId = row[PRODUCT_COL_NAME]
 
-        if row[RATING_COL]:
-            rating = row[RATING_COL]
-        elif int(row[BOUGHT_COL]) != 0:
-            rating = '5'
-        elif int(row[PUT_IN_CART_COL]) != 0:
-            rating = '4.5'
-        elif int(row[PUT_IN_FAVORITE_COL]) != 0:
-            rating = '4'
-        elif int(row[CLICKED_COL]) != 0:
-            rating = '3.5'
+        if row[RATING_COL_NAME]:
+            rating = try_float(row[RATING_COL_NAME])
+        elif int(row[BOUGHT_COL_NAME]) != 0:
+            rating = 5.0
+        elif int(row[PUT_IN_CART_COL_NAME]) != 0:
+            rating = 4.5
+        elif int(row[PUT_IN_FAVORITE_COL_NAME]) != 0:
+            rating = 4.0
+        elif int(row[CLICKED_COL_NAME]) != 0:
+            rating = 3.5
         else:
             rating = ''
+
+        product_seasons = get_product_seasons(productId)
+        current_season = get_current_season()
+
+        if current_season in product_seasons:
+            if rating == '':
+                rating = 0
+            rating += 1
         
         pivot_data[productId][userId] = rating
 
-    users = sorted({ row[USER_COL] for row in ratings[1:] })
-    products = sorted(pivot_data.keys())
+    userIds = sorted({ row[USER_COL_NAME] for row in ratings[1:] })
+    productIds = sorted(pivot_data.keys())
 
     new_csv = []
 
-    for product in products:
+    for productId in productIds:
         row = []
-        for user in users:
-            row.append(pivot_data[product].get(user, ''))
+        for userId in userIds:
+            row.append(pivot_data[productId].get(userId, ''))
         new_csv.append(row)
 
     save_csv('ratings_mean.csv', new_csv)
@@ -64,10 +64,12 @@ def get_data():
     num_features = X.shape[1]
     num_products = X.shape[0]
 
-    Y = load_csv_np("ratings_mean.csv", skip_header=False) # 4 X 3
-    num_users = Y.shape[1]
+    Y_with_nan = load_csv_np("ratings_mean.csv", skip_header=False) # 4 X 3
+    num_users = Y_with_nan.shape[1]
 
-    R = get_rated_notrated_matrix()
+    R = get_rated_notrated_matrix(Y_with_nan)
+
+    Y = np.nan_to_num(Y_with_nan, nan=0)
 
     print("Y", Y.shape, "R", R.shape)
     print("X", X.shape)
@@ -77,40 +79,20 @@ def get_data():
 
     return X, Y, R, num_features, num_products
 
-def get_rated_notrated_matrix():
-    Y = load_csv_np("ratings_mean.csv", skip_header=False)
-    return np.where(np.isnan(Y), 0, 1)
-    return np.sum((np.dot(W, X) + b) - Y)
+def get_rated_notrated_matrix(Y_with_nan):
+    return np.where(np.isnan(Y_with_nan), 0, 1)
 
 def normalize_ratings(Y, R):
     """
-    Normalizes the ratings in Y so that each product has a zero mean.
-    
-    Parameters:
-        Y (np.array): A (num_products x num_users) matrix of ratings.
-        R (np.array): A (num_products x num_users) binary indicator matrix where R[i, j] = 1 
-                      if product i was rated by user j, and 0 otherwise.
-    
-    Returns:
-        Ynorm (np.array): The normalized ratings matrix with the mean subtracted for each product.
-        Ymean (np.array): A vector of mean ratings for each product.
+    Preprocess data by subtracting mean rating for every row.
+    Only include real ratings R(i,j)=1.
+    [Ynorm, Ymean] = normalize_ratings(Y, R) normalized Y so that each row
+    has a rating of 0 on average. Unrated moves then have a mean rating (0)
+    Returns the mean rating in Ymean.
     """
-    num_products = Y.shape[0]
-    Ymean = np.zeros(num_products)
-    Ynorm = np.zeros(Y.shape)
-    
-    # Iterate over each product
-    for i in range(num_products):
-        # Find the indices of users who rated the product
-        idx = np.where(R[i, :] == 1)[0]
-        
-        if idx.size > 0:
-            # Compute the mean rating for the product
-            Ymean[i] = np.mean(Y[i, idx])
-            # Subtract the mean rating from each rating where a rating exists
-            Ynorm[i, idx] = Y[i, idx] - Ymean[i]
-    
-    return Ynorm, Ymean.reshape(-1, 1)
+    Ymean = (np.sum(Y*R, axis=1) / (np.sum(R, axis=1) + 1e-12)).reshape(-1, 1) 
+    Ynorm = Y - np.multiply(Ymean, R)
+    return(Ynorm, Ymean)
 
 def cofi_cost_func_v(X, W, b, Y, R, lambda_):
     """
@@ -134,9 +116,9 @@ def cofi_cost_func_v(X, W, b, Y, R, lambda_):
 
 def load_csv_list(filepath):
     """Load CSV data from a file and return a list of rows."""
-    with open(filepath, newline='') as csvfile:
-        reader = csv.reader(csvfile)
-        return list(reader)
+    with open(filepath, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        return [row for row in reader]
 
 def load_csv_np(filepath, skip_header):
     return np.genfromtxt(filepath, delimiter=",", skip_header=skip_header)
@@ -152,5 +134,37 @@ def try_float(value):
         return float(value) if value is not None else None
     except ValueError:
         return None
+
+def get_product_seasons(productId):
+    features_for_products = load_csv_list("../../recommenders/datasets/pa/product_features.csv") # features for products (Bosch, Makita, DeWalt, Burgija, Testera...) 4 X 10000
+
+    result = []
+
+    for product in features_for_products:
+        if product["ProductId"] == str(productId):
+            if product["Summer"] == "1":
+                result.append("Summer")
+            if product["Autumn"] == "1":
+                result.append("Autumn")
+            if product["Winter"] == "1":
+                result.append("Winter")
+            if product["Spring"] == "1":
+                result.append("Spring")
     
+    return result
+
+def get_current_season():
+    now = date.today()
+    month = now.month
+    day = now.day
+
+    if (month == 12 and day >= 21) or (1 <= month <= 3 and not (month == 3 and day >= 21)):
+        return 'Winter'
+    elif (month == 3 and day >= 21) or (4 <= month <= 6 and not (month == 6 and day >= 21)):
+        return 'Spring'
+    elif (month == 6 and day >= 21) or (7 <= month <= 9 and not (month == 9 and day >= 23)):
+        return 'Summer'
+    else:
+        return 'Autumn'
+
 #endregion
