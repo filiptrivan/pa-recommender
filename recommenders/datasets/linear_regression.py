@@ -5,6 +5,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from datetime import date
+import matplotlib.pyplot as plt
+from tensorflow import keras
+
+#region Data Manipulation
 
 USER_COL_NAME = 'UserId'
 PRODUCT_COL_NAME = 'ProductId'
@@ -61,6 +65,7 @@ def save_rating_values():
 
 def get_data():
     X = load_csv_np("../../recommenders/datasets/pa/product_features.csv", skip_header=True) # features for products (Bosch, Makita, DeWalt, Burgija, Testera...) 4 X 10000
+    X = X[:, 1:]
     num_features = X.shape[1]
     num_products = X.shape[0]
 
@@ -94,6 +99,10 @@ def normalize_ratings(Y, R):
     Ynorm = Y - np.multiply(Ymean, R)
     return(Ynorm, Ymean)
 
+#endregion
+
+#region Algorithm
+
 def cofi_cost_func_v(X, W, b, Y, R, lambda_):
     """
     Returns the cost for the content-based filtering
@@ -111,6 +120,56 @@ def cofi_cost_func_v(X, W, b, Y, R, lambda_):
     j = (tf.linalg.matmul(X, tf.transpose(W)) + b - Y)*R
     J = 0.5 * tf.reduce_sum(j**2) + (lambda_/2) * (tf.reduce_sum(X**2) + tf.reduce_sum(W**2))
     return J
+
+def rmse(Y, Y_predictions, R):
+    mask = R == 1
+    rmse_score = np.sqrt(np.mean((Y[mask] - Y_predictions[mask]) ** 2))
+    print(f'RMSE score: {rmse_score}')
+    return rmse_score
+
+#region TensorFlow
+
+def initialize_tf_variables(product_features, num_features, num_users):
+    tf.random.set_seed(1234)
+    X = tf.Variable(product_features, dtype=tf.float64, name='X', trainable=True)
+    W = tf.Variable(tf.random.normal((num_users,  num_features),dtype=tf.float64),  name='W')
+    b = tf.Variable(tf.random.normal((1,          num_users),   dtype=tf.float64),  name='b')
+
+    return X, W, b
+
+def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
+    optimizer = keras.optimizers.Adam(learning_rate)
+
+    cost_history = []
+
+    for iter in range(iterations):
+        # Use TensorFlow’s GradientTape to record the operations used to compute the cost 
+        with tf.GradientTape() as tape:
+            # Compute the cost (forward pass included in cost)
+            cost_value = cofi_cost_func_v(X, W, b, Ynorm, R, lambda_)
+
+        # Use the gradient tape to automatically retrieve the gradients of the trainable variables with respect to the loss
+        grads = tape.gradient( cost_value, [X,W,b] )
+
+        # Run one step of gradient descent by updating the value of the variables to minimize the loss.
+        optimizer.apply_gradients( zip(grads, [X,W,b]) )
+
+        cost_history.append(cost_value)
+
+        if iter % 20 == 0:
+            print(f"Training loss at iteration {iter}: {cost_value:0.3f}")
+
+    plt.plot(range(iterations), cost_history, label="Cost Function")
+    plt.xlabel("Iterations")
+    plt.ylabel("Cost")
+    plt.title("Cost Function Over Iterations")
+    plt.legend()
+    plt.show()
+
+#endregion
+
+#endregion
+
 
 #region Helpers
 
