@@ -4,51 +4,64 @@ from collections import defaultdict
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow import keras
+from datetime import datetime
 from datetime import date
 import matplotlib.pyplot as plt
-from tensorflow import keras
+from math import exp
 
 #region Data Manipulation
 
 USER_COL_NAME = 'UserId'
 PRODUCT_COL_NAME = 'ProductId'
-RATING_COL_NAME = 'Rating'
-BOUGHT_COL_NAME = 'Bought'
-PUT_IN_CART_COL_NAME = 'PutInCart'
-PUT_IN_FAVORITE_COL_NAME = 'PutInFavorite'
-CLICKED_COL_NAME = 'Clicked'
+INTERACTION_COL_NAME = 'Bought'
+
+DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
 def save_rating_values():
     ratings = load_csv_list("../../recommenders/datasets/pa/ratings.csv")
 
     pivot_data = defaultdict(dict)
 
+    grouped_ratings = defaultdict(list)
+
     for row in ratings[1:]:
-        userId = row[USER_COL_NAME]
-        productId = row[PRODUCT_COL_NAME]
+        key = (row[USER_COL_NAME], row[PRODUCT_COL_NAME])
+        grouped_ratings[key].append(row)
 
-        if row[RATING_COL_NAME]:
-            rating = try_float(row[RATING_COL_NAME])
-        elif int(row[BOUGHT_COL_NAME]) != 0:
-            rating = 5.0
-        elif int(row[PUT_IN_CART_COL_NAME]) != 0:
-            rating = 4.5
-        elif int(row[PUT_IN_FAVORITE_COL_NAME]) != 0:
-            rating = 4.0
-        elif int(row[CLICKED_COL_NAME]) != 0:
-            rating = 3.5
-        else:
-            rating = ''
-
-        product_seasons = get_product_seasons(productId)
-        current_season = get_current_season()
-
-        if current_season in product_seasons:
-            if rating == '':
-                rating = 0
-            rating += 1
+    for (userId, productId), rows in grouped_ratings.items():
+        rating = 0
         
-        pivot_data[productId][userId] = rating
+        bc = 1
+        picc = 1
+        pifc = 1
+        cc = 1
+        for row in rows:
+            if row[INTERACTION_COL_NAME] == 'Bought':
+                rating += 4.0 / bc
+            elif row[INTERACTION_COL_NAME] == 'PutInCart':
+                rating += 2.0 / picc
+            elif row[INTERACTION_COL_NAME] == 'PutInFavorites':
+                rating += 1.5 / pifc
+            elif row[INTERACTION_COL_NAME] == 'Clicked':
+                rating += 0.5 / cc
+
+            # FT: Recency bonus
+            if row['Timestamp']:
+                timestamp = date(row['Timestamp'])
+                now = datetime.now()
+                diff_days = (now - timestamp).total_seconds() / (60 * 60 * 24)
+                bonus = recency_bonus(diff_days)
+                rating += bonus
+
+        # TODO FT: Put this logic after everything to filter products
+        # product_seasons = get_product_seasons(productId)
+        # current_season = get_current_season()
+
+        # if current_season in product_seasons:
+        #     rating += 1
+        
+        pivot_data[productId][userId] = '' if rating == 0  else rating
 
     userIds = sorted({ row[USER_COL_NAME] for row in ratings[1:] })
     productIds = sorted(pivot_data.keys())
@@ -62,6 +75,19 @@ def save_rating_values():
         new_csv.append(row)
 
     save_csv('ratings_mean.csv', new_csv)
+
+def recency_bonus(diff_days, decay_constant):
+    """
+    Returns a recency bonus that decays rapidly initially but approaches 0.5 for old interactions.
+    At diff_days=0, bonus=1; as diff_days -> infinity, bonus -> 0.5.
+    """
+    return 0.5 + 0.5 * exp(-diff_days / decay_constant)
+
+def test_recency_bonus(days, decay_scale=DECAY_SCALE):
+    first_days = {day: 2 * exp(-day / decay_scale) for day in range(1, days)}
+
+    for day, value in first_days.items():
+        print(f"Day {day}: {value:.4f}")
 
 def get_data():
     X = load_csv_np("../../recommenders/datasets/pa/product_features.csv", skip_header=True) # features for products (Bosch, Makita, DeWalt, Burgija, Testera...) 4 X 10000
@@ -176,11 +202,11 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
 def load_csv_list(filepath):
     """Load CSV data from a file and return a list of rows."""
     with open(filepath, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
+        reader = csv.DictReader(csvfile, delimiter=';')
         return [row for row in reader]
 
 def load_csv_np(filepath, skip_header):
-    return np.genfromtxt(filepath, delimiter=",", skip_header=skip_header)
+    return np.genfromtxt(filepath, delimiter=";", skip_header=skip_header)
 
 def save_csv(filename, rows):
     """Save a list of rows to a CSV file."""
