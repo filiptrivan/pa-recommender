@@ -1,5 +1,5 @@
-ProductId;Manufacturer;Categories;Season
-1;Bosch;Burgije;Summer
+ProductId;Manufacturer;Categories
+1;Bosch;Burgije
 2;1;0;0;0;1;0;1;0;0;0
 3;1;0;0;0;1;0;0;1;0;0
 4;0;1;0;0;0;1;0;0;1;0

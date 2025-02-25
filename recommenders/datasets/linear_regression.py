@@ -1,5 +1,6 @@
 import os
 import csv
+import pandas as pd
 from collections import defaultdict
 import numpy as np
 import tensorflow as tf
@@ -12,24 +13,26 @@ from math import exp
 
 #region Data Manipulation
 
-USER_COL_NAME = 'UserId'
 PRODUCT_COL_NAME = 'ProductId'
-INTERACTION_COL_NAME = 'Bought'
+USER_COL_NAME = 'UserId'
+INTERACTION_COL_NAME = 'Interaction'
 
 DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-def save_rating_values():
-    ratings = load_csv_list("../../recommenders/datasets/pa/ratings.csv")
+def save_interaction_values():
+    now = pd.Timestamp.now()
+    interactions = load_excel_list("../../../pa-data/Interactions.xlsx")
 
     pivot_data = defaultdict(dict)
+    products = defaultdict(dict)
 
     grouped_ratings = defaultdict(list)
 
-    for row in ratings[1:]:
-        key = (row[USER_COL_NAME], row[PRODUCT_COL_NAME])
+    for row in interactions:
+        key = (str(row[PRODUCT_COL_NAME]), row[USER_COL_NAME])
         grouped_ratings[key].append(row)
 
-    for (userId, productId), rows in grouped_ratings.items():
+    for (productId, userId), rows in grouped_ratings.items():
         rating = 0
         
         bc = 1
@@ -37,35 +40,41 @@ def save_rating_values():
         pifc = 1
         cc = 1
         for row in rows:
-            if row[INTERACTION_COL_NAME] == 'Bought':
-                rating += 4.0 / bc
-            elif row[INTERACTION_COL_NAME] == 'PutInCart':
-                rating += 2.0 / picc
-            elif row[INTERACTION_COL_NAME] == 'PutInFavorites':
-                rating += 1.5 / pifc
-            elif row[INTERACTION_COL_NAME] == 'Clicked':
-                rating += 0.5 / cc
-
             # FT: Recency bonus
-            if row['Timestamp']:
-                timestamp = date(row['Timestamp'])
-                now = datetime.now()
-                diff_days = (now - timestamp).total_seconds() / (60 * 60 * 24)
-                bonus = recency_bonus(diff_days)
-                rating += bonus
+            timestamp = parse_and_format_timestamp(row['Timestamp'])
+            # helper = row['Timestamp']
+            # print(f'{helper} -> {timestamp}')
+            diff_days = (now - timestamp).total_seconds() / (60 * 60 * 24)
 
-        # TODO FT: Put this logic after everything to filter products
-        # product_seasons = get_product_seasons(productId)
-        # current_season = get_current_season()
+            if diff_days < 0:
+                raise ValueError("The timestamp is in the future; please provide a valid past timestamp.")
 
-        # if current_season in product_seasons:
-        #     rating += 1
+            if row[INTERACTION_COL_NAME] == 'Bought':
+                rating += 1 / bc
+                bonus = recency_bonus(diff_days, 1)
+                bc += 1
+            elif row[INTERACTION_COL_NAME] == 'PutInCart':
+                rating += 0.8 / picc
+                bonus = recency_bonus(diff_days, 0.8)
+                picc += 1
+            elif row[INTERACTION_COL_NAME] == 'PutInFavorites':
+                rating += 0.6 / pifc
+                bonus = recency_bonus(diff_days, 0.6)
+                pifc += 1
+            elif row[INTERACTION_COL_NAME] == 'Clicked':
+                rating += 0.2 / cc
+                bonus = recency_bonus(diff_days, 0.2)
+                cc += 1
+            else:
+                raise ValueError("Interaction value doesn't exist.")
         
+            rating += bonus
+
         pivot_data[productId][userId] = '' if rating == 0  else rating
 
-    userIds = sorted({ row[USER_COL_NAME] for row in ratings[1:] })
     productIds = sorted(pivot_data.keys())
-
+    userIds = sorted({user[USER_COL_NAME] for user in interactions})
+    print(userIds)
     new_csv = []
 
     for productId in productIds:
@@ -74,41 +83,57 @@ def save_rating_values():
             row.append(pivot_data[productId].get(userId, ''))
         new_csv.append(row)
 
-    save_csv('ratings_mean.csv', new_csv)
+    save_csv('Interactions.csv', new_csv)
 
-def recency_bonus(diff_days, decay_constant):
-    """
-    Returns a recency bonus that decays rapidly initially but approaches 0.5 for old interactions.
-    At diff_days=0, bonus=1; as diff_days -> infinity, bonus -> 0.5.
-    """
-    return 0.5 + 0.5 * exp(-diff_days / decay_constant)
+def recency_bonus(diff_days, interaction_weight, decay_scale=DECAY_SCALE):
+    return interaction_weight * exp(-diff_days / decay_scale)
 
 def test_recency_bonus(days, decay_scale=DECAY_SCALE):
-    first_days = {day: 2 * exp(-day / decay_scale) for day in range(1, days)}
+    first_days = {day: recency_bonus(day, decay_scale) for day in range(1, days)}
 
     for day, value in first_days.items():
         print(f"Day {day}: {value:.4f}")
 
-def get_data():
-    X = load_csv_np("../../recommenders/datasets/pa/product_features.csv", skip_header=True) # features for products (Bosch, Makita, DeWalt, Burgija, Testera...) 4 X 10000
-    X = X[:, 1:]
-    num_features = X.shape[1]
-    num_products = X.shape[0]
+def parse_and_format_timestamp(value): 
+    if isinstance(value, str):
+        timestamp = pd.to_datetime(value, format='%d/%m/%Y')
+    else:
+        timestamp = switch_months_and_days(value)
+    
+    return timestamp
 
-    Y_with_nan = load_csv_np("ratings_mean.csv", skip_header=False) # 4 X 3
+def switch_months_and_days(value):
+    """
+    Correct a date that may have been parsed using a MM/DD/YYYY format
+    when it should be interpreted as DD/MM/YYYY.
+    
+    If the day component (currently in the month position) is 12 or less,
+    swap the month and day. Otherwise, return the original timestamp.
+    """
+    dt = pd.Timestamp(value)
+    if dt.day <= 12:
+        try:
+            corrected = pd.Timestamp(year=dt.year, month=dt.day, day=dt.month)
+            return corrected
+        except ValueError:
+            return dt
+    else:
+        return dt
+
+def get_data():
+    Y_with_nan = load_csv_np("Interactions.csv", skip_header=False)
     num_users = Y_with_nan.shape[1]
+    num_products = Y_with_nan.shape[0]
 
     R = get_rated_notrated_matrix(Y_with_nan)
 
     Y = np.nan_to_num(Y_with_nan, nan=0)
 
     print("Y", Y.shape, "R", R.shape)
-    print("X", X.shape)
-    print("num_features", num_features)
     print("num_products",   num_products)
     print("num_users",    num_users)
 
-    return X, Y, R, num_features, num_products
+    return Y, R, num_products
 
 def get_rated_notrated_matrix(Y_with_nan):
     return np.where(np.isnan(Y_with_nan), 0, 1)
@@ -155,9 +180,9 @@ def rmse(Y, Y_predictions, R):
 
 #region TensorFlow
 
-def initialize_tf_variables(product_features, num_features, num_users):
+def initialize_tf_variables(num_users, num_products, num_features=100):
     tf.random.set_seed(1234)
-    X = tf.Variable(product_features, dtype=tf.float64, name='X', trainable=True)
+    X = tf.Variable(tf.random.normal((num_products, num_features),dtype=tf.float64),  name='X')
     W = tf.Variable(tf.random.normal((num_users,  num_features),dtype=tf.float64),  name='W')
     b = tf.Variable(tf.random.normal((1,          num_users),   dtype=tf.float64),  name='b')
 
@@ -196,7 +221,6 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
 
 #endregion
 
-
 #region Helpers
 
 def load_csv_list(filepath):
@@ -204,6 +228,11 @@ def load_csv_list(filepath):
     with open(filepath, newline='', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=';')
         return [row for row in reader]
+    
+def load_excel_list(filepath):
+    """Load Excel data from a file and return a list of rows as dictionaries."""
+    df = pd.read_excel(filepath)
+    return df.to_dict(orient='records')
 
 def load_csv_np(filepath, skip_header):
     return np.genfromtxt(filepath, delimiter=";", skip_header=skip_header)
@@ -211,7 +240,7 @@ def load_csv_np(filepath, skip_header):
 def save_csv(filename, rows):
     """Save a list of rows to a CSV file."""
     with open(filename, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(csvfile, delimiter=';')
         writer.writerows(rows)
 
 def try_float(value):
