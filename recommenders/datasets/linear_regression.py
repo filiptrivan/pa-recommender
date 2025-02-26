@@ -10,6 +10,7 @@ from datetime import datetime
 from datetime import date
 import matplotlib.pyplot as plt
 from math import exp
+from math import log1p
 
 #region Data Manipulation
 
@@ -17,7 +18,8 @@ PRODUCT_COL_NAME = 'ProductId'
 USER_COL_NAME = 'UserId'
 INTERACTION_COL_NAME = 'Interaction'
 
-DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
 def save_interaction_values():
     now = pd.Timestamp.now()
@@ -35,11 +37,9 @@ def save_interaction_values():
     for (productId, userId), rows in grouped_ratings.items():
         rating = 0
         
-        bc = 1
-        picc = 1
-        pifc = 1
-        cc = 1
-        for row in rows:
+        for i in range(len(rows)):
+            row = rows[i]
+
             # FT: Recency bonus
             timestamp = parse_and_format_timestamp(row['Timestamp'])
             # helper = row['Timestamp']
@@ -50,25 +50,17 @@ def save_interaction_values():
                 raise ValueError("The timestamp is in the future; please provide a valid past timestamp.")
 
             if row[INTERACTION_COL_NAME] == 'Bought':
-                rating += 1 / bc
-                bonus = recency_bonus(diff_days, 1)
-                bc += 1
+                rating += get_rating_based_on_recency(diff_days, 1)
             elif row[INTERACTION_COL_NAME] == 'PutInCart':
-                rating += 0.8 / picc
-                bonus = recency_bonus(diff_days, 0.8)
-                picc += 1
+                rating += get_rating_based_on_recency(diff_days, 0.5)
             elif row[INTERACTION_COL_NAME] == 'PutInFavorites':
-                rating += 0.6 / pifc
-                bonus = recency_bonus(diff_days, 0.6)
-                pifc += 1
+                rating += get_rating_based_on_recency(diff_days, 0.3)
             elif row[INTERACTION_COL_NAME] == 'Clicked':
-                rating += 0.2 / cc
-                bonus = recency_bonus(diff_days, 0.2)
-                cc += 1
+                rating += get_rating_based_on_recency(diff_days, 0.1)
             else:
                 raise ValueError("Interaction value doesn't exist.")
-        
-            rating += bonus
+
+        rating += get_multiple_interaction_bonus(len(rows), rating)
 
         pivot_data[productId][userId] = '' if rating == 0  else rating
 
@@ -85,11 +77,23 @@ def save_interaction_values():
 
     save_csv('Interactions.csv', new_csv)
 
-def recency_bonus(diff_days, interaction_weight, decay_scale=DECAY_SCALE):
-    return interaction_weight * exp(-diff_days / decay_scale)
+# Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
+# When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
+def get_multiple_interaction_bonus(num_of_interactions, rating):
+    if num_of_interactions == 1:
+        return 0
+    
+    # bonus = 1 - (1 / (1 + (num_of_interactions - 1) * rating)) # FT: Slower rise and bigger initial values
+    bonus = 1 - (1 / (1 + log1p((num_of_interactions - 1) * rating))) # FT: Slower rise and lower initial values
 
-def test_recency_bonus(days, decay_scale=DECAY_SCALE):
-    first_days = {day: recency_bonus(day, decay_scale) for day in range(1, days)}
+    return min(bonus, 1)
+
+# User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
+def get_rating_based_on_recency(diff_days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
+    return interaction_weight * exp(-diff_days / decay_scale) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+
+def test_recency_bonus(days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
+    first_days = {day: get_rating_based_on_recency(day, interaction_weight, decay_scale) for day in range(1, days)}
 
     for day, value in first_days.items():
         print(f"Day {day}: {value:.4f}")
@@ -136,7 +140,7 @@ def get_data():
     return Y, R, num_products
 
 def get_rated_notrated_matrix(Y_with_nan):
-    return np.where(np.isnan(Y_with_nan), 0, 1)
+    return np.where(np.isnan(Y_with_nan), 0.0, 1.0)
 
 def normalize_ratings(Y, R):
     """
@@ -154,6 +158,7 @@ def normalize_ratings(Y, R):
 
 #region Algorithm
 
+@tf.function
 def cofi_cost_func_v(X, W, b, Y, R, lambda_):
     """
     Returns the cost for the content-based filtering
@@ -193,7 +198,7 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
 
     cost_history = []
 
-    for iter in range(iterations):
+    for iter in tf.range(iterations):
         # Use TensorFlow’s GradientTape to record the operations used to compute the cost 
         with tf.GradientTape() as tape:
             # Compute the cost (forward pass included in cost)
@@ -208,7 +213,7 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
         cost_history.append(cost_value)
 
         if iter % 20 == 0:
-            print(f"Training loss at iteration {iter}: {cost_value:0.3f}")
+            tf.print(f"Training loss at iteration {iter}: {cost_value}")
 
     plt.plot(range(iterations), cost_history, label="Cost Function")
     plt.xlabel("Iterations")
