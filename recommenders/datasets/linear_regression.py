@@ -26,7 +26,6 @@ def save_interaction_values():
     interactions = load_excel_list("../../../pa-data/Interactions.xlsx")
 
     pivot_data = defaultdict(dict)
-    products = defaultdict(dict)
 
     grouped_ratings = defaultdict(list)
 
@@ -66,16 +65,19 @@ def save_interaction_values():
 
     productIds = sorted(pivot_data.keys())
     userIds = sorted({user[USER_COL_NAME] for user in interactions})
-    print(userIds)
+    
+    products = []
     new_csv = []
 
     for productId in productIds:
         row = []
         for userId in userIds:
             row.append(pivot_data[productId].get(userId, ''))
+        products.append([productId])
         new_csv.append(row)
 
     save_csv('Interactions.csv', new_csv)
+    save_csv('Products.csv', products)
 
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
@@ -228,10 +230,16 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
 
 #region Helpers
 
-def load_csv_list(filepath):
+def load_csv_dict(filepath):
     """Load CSV data from a file and return a list of rows."""
     with open(filepath, newline='', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=';')
+        return [row for row in reader]
+
+def load_csv_list(filepath):
+    """Load CSV data from a file and return a list of rows."""
+    with open(filepath, newline='', encoding='utf-8') as csvfile:
+        reader = csv.reader(csvfile, delimiter=';')
         return [row for row in reader]
     
 def load_excel_list(filepath):
@@ -253,37 +261,5 @@ def try_float(value):
         return float(value) if value is not None else None
     except ValueError:
         return None
-
-def get_product_seasons(productId):
-    features_for_products = load_csv_list("../../recommenders/datasets/pa/product_features.csv") # features for products (Bosch, Makita, DeWalt, Burgija, Testera...) 4 X 10000
-
-    result = []
-
-    for product in features_for_products:
-        if product["ProductId"] == str(productId):
-            if product["Summer"] == "1":
-                result.append("Summer")
-            if product["Autumn"] == "1":
-                result.append("Autumn")
-            if product["Winter"] == "1":
-                result.append("Winter")
-            if product["Spring"] == "1":
-                result.append("Spring")
-    
-    return result
-
-def get_current_season():
-    now = date.today()
-    month = now.month
-    day = now.day
-
-    if (month == 12 and day >= 21) or (1 <= month <= 3 and not (month == 3 and day >= 21)):
-        return 'Winter'
-    elif (month == 3 and day >= 21) or (4 <= month <= 6 and not (month == 6 and day >= 21)):
-        return 'Spring'
-    elif (month == 6 and day >= 21) or (7 <= month <= 9 and not (month == 9 and day >= 23)):
-        return 'Summer'
-    else:
-        return 'Autumn'
 
 #endregion
