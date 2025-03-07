@@ -21,9 +21,9 @@ INTERACTION_COL_NAME = 'Interaction'
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-def save_interaction_values():
+def save_interaction_values(interactions_path):
     now = pd.Timestamp.now()
-    interactions = load_excel_list("../../../pa-data/Interactions.xlsx")
+    interactions = load_excel_list(interactions_path)
 
     pivot_data = defaultdict(dict)
 
@@ -78,6 +78,7 @@ def save_interaction_values():
 
     save_csv('Interactions.csv', new_csv)
     save_csv('Products.csv', products)
+    save_csv('Users.csv', [userIds])
 
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
@@ -158,6 +159,8 @@ def normalize_ratings(Y, R):
 
 #endregion
 
+#region SGD
+
 #region Algorithm
 
 @tf.function
@@ -225,6 +228,14 @@ def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
     plt.show()
 
 #endregion
+
+#endregion
+
+#endregion
+
+#region ALS
+
+
 
 #endregion
 
