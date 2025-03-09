@@ -14,10 +14,9 @@ INTERACTION_COL_NAME = 'Interaction'
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-def save_interaction_values(interactions_path):
+def save_interaction_values(interactions_path, all_products):
     now = pd.Timestamp.now()
     interactions = load_excel_list(interactions_path)
-    all_products = load_excel_list('../../pa-data/AllProducts.xlsx')
 
     pivot_data = defaultdict(dict)
 

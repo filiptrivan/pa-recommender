@@ -23,11 +23,11 @@ def hello_world():
 @app.route('/GetRecommendations')
 def get_recommendations():
     user_id = request.args.get('user_id')
-
+    
     if user_id is None or recommendation_result_dict.get(user_id) is None:
-        return jsonify({'a': recommendation_result_dict['top_ten_overall_recommendations']})
+        return list(recommendation_result_dict['top_ten_overall_recommendations'])
 
-    return recommendation_result_dict[user_id]
+    return list(recommendation_result_dict[user_id])
 
 if __name__ == '__main__':
     app.run(debug=True)
