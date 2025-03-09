@@ -1,17 +1,9 @@
-import os
 import csv
 import pandas as pd
 from collections import defaultdict
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow import keras
-from datetime import datetime
-from datetime import date
-import matplotlib.pyplot as plt
 from math import exp
 from math import log1p
-import implicit
 
 #region Data Manipulation
 
@@ -25,6 +17,7 @@ MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the
 def save_interaction_values(interactions_path):
     now = pd.Timestamp.now()
     interactions = load_excel_list(interactions_path)
+    all_products = load_excel_list('../../pa-data/AllProducts.xlsx')
 
     pivot_data = defaultdict(dict)
 
@@ -74,7 +67,14 @@ def save_interaction_values(interactions_path):
         row = []
         for userId in userIds:
             row.append(pivot_data[productId].get(userId, ''))
-        products.append([productId])
+        product = next((x for x in all_products if x['SKU'] == productId), None)
+        products.append([
+            productId,
+            product.get('Stock', '0') if product else '0',
+            product.get('Status', 'Draft') if product else 'Draft',
+            product.get('Visibility', 'Private') if product else 'Private',
+            int(product.get('Active', '0')) if product else '0'
+        ])
         new_csv.append(row)
 
     save_csv('Interactions.csv', new_csv)
@@ -133,130 +133,13 @@ def get_data():
     num_users = Y_with_nan.shape[1]
     num_products = Y_with_nan.shape[0]
 
-    R = get_rated_notrated_matrix(Y_with_nan)
-
     Y = np.nan_to_num(Y_with_nan, nan=0)
 
-    print("Y", Y.shape, "R", R.shape)
+    print("Y", Y.shape)
     print("num_products",   num_products)
     print("num_users",    num_users)
 
-    return Y, R, num_products
-
-def get_rated_notrated_matrix(Y_with_nan):
-    return np.where(np.isnan(Y_with_nan), 0.0, 1.0)
-
-def normalize_ratings(Y, R):
-    """
-    Preprocess data by subtracting mean rating for every row.
-    Only include real ratings R(i,j)=1.
-    [Ynorm, Ymean] = normalize_ratings(Y, R) normalized Y so that each row
-    has a rating of 0 on average. Unrated moves then have a mean rating (0)
-    Returns the mean rating in Ymean.
-    """
-    Ymean = (np.sum(Y*R, axis=1) / (np.sum(R, axis=1) + 1e-12)).reshape(-1, 1) 
-    Ynorm = Y - np.multiply(Ymean, R)
-    return(Ynorm, Ymean)
-
-#endregion
-
-#region SGD
-
-#region Algorithm
-
-@tf.function
-def cofi_cost_func_v(X, W, b, Y, R, lambda_):
-    """
-    Returns the cost for the content-based filtering
-    Vectorized for speed. Uses tensorflow operations to be compatible with custom training loop.
-    Args:
-      X (ndarray (num_products,num_features)): matrix of item features
-      W (ndarray (num_users,num_features)) : matrix of user parameters
-      b (ndarray (1, num_users)            : vector of user parameters
-      Y (ndarray (num_products,num_users)    : matrix of user ratings of products
-      R (ndarray (num_products,num_users)    : matrix, where R(i, j) = 1 if the i-th products was rated by the j-th user
-      lambda_ (float): regularization parameter
-    Returns:
-      J (float) : Cost
-    """
-    j = (tf.linalg.matmul(X, tf.transpose(W)) + b - Y)*R
-    J = 0.5 * tf.reduce_sum(j**2) + (lambda_/2) * (tf.reduce_sum(X**2) + tf.reduce_sum(W**2))
-    return J
-
-def rmse(Y, Y_predictions, R):
-    mask = R == 1
-    rmse_score = np.sqrt(np.mean((Y[mask] - Y_predictions[mask]) ** 2))
-    print(f'RMSE score: {rmse_score}')
-    return rmse_score
-
-#region TensorFlow
-
-def initialize_tf_variables(num_users, num_products, num_features=100):
-    tf.random.set_seed(1234)
-    X = tf.Variable(tf.random.normal((num_products, num_features),dtype=tf.float64),  name='X')
-    W = tf.Variable(tf.random.normal((num_users,  num_features),dtype=tf.float64),  name='W')
-    b = tf.Variable(tf.random.normal((1,          num_users),   dtype=tf.float64),  name='b')
-
-    return X, W, b
-
-def calculate_parameters(X, W, b, Ynorm, R, iterations, lambda_, learning_rate):
-    optimizer = keras.optimizers.Adam(learning_rate)
-
-    cost_history = []
-
-    for iter in tf.range(iterations):
-        # Use TensorFlow’s GradientTape to record the operations used to compute the cost 
-        with tf.GradientTape() as tape:
-            # Compute the cost (forward pass included in cost)
-            cost_value = cofi_cost_func_v(X, W, b, Ynorm, R, lambda_)
-
-        # Use the gradient tape to automatically retrieve the gradients of the trainable variables with respect to the loss
-        grads = tape.gradient( cost_value, [X,W,b] )
-
-        # Run one step of gradient descent by updating the value of the variables to minimize the loss.
-        optimizer.apply_gradients( zip(grads, [X,W,b]) )
-
-        cost_history.append(cost_value)
-
-        if iter % 20 == 0:
-            tf.print(f"Training loss at iteration {iter}: {cost_value}")
-
-    plt.plot(range(iterations), cost_history, label="Cost Function")
-    plt.xlabel("Iterations")
-    plt.ylabel("Cost")
-    plt.title("Cost Function Over Iterations")
-    plt.legend()
-    plt.show()
-
-#endregion
-
-#endregion
-
-#endregion
-
-#region ALS
-
-def benchmark_accuracy(sparse_user_product): 
-    output = defaultdict(list) 
-
-    def store_loss(name): 
-        def inner(iteration, elapsed, loss): 
-            print(f"model {name} iteration {iteration} loss {loss:.5f}") 
-            output[name].append(loss) 
-
-        return inner 
-
-    for steps in [2, 3, 4]: 
-        model = implicit.als.AlternatingLeastSquares( 
-            factors=100, 
-            use_gpu=False, 
-            regularization=0.1, 
-            iterations=25, 
-            calculate_training_loss=True, 
-        ) 
-        model.cg_steps = steps 
-        model.fit_callback = store_loss(f"cg{steps}") 
-        model.fit(sparse_user_product) 
+    return Y
 
 #endregion
 
