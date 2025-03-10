@@ -36,7 +36,7 @@ def save_interaction_values(interactions_path, all_products):
             timestamp = parse_and_format_timestamp(row['Timestamp'])
             # helper = row['Timestamp']
             # print(f'{helper} -> {timestamp}')
-            diff_days = (now - timestamp).total_seconds() / (60 * 60 * 24)
+            diff_days  = (now - timestamp).total_seconds() / (60 * 60 * 24)
 
             if diff_days < 0:
                 raise ValueError("The timestamp is in the future; please provide a valid past timestamp.")
@@ -60,7 +60,11 @@ def save_interaction_values(interactions_path, all_products):
     userIds = sorted({user[USER_COL_NAME] for user in interactions})
     
     products = []
+    users = []
     new_csv = []
+
+    for user_id in userIds:
+        users.append([user_id])
 
     for productId in productIds:
         row = []
@@ -78,7 +82,7 @@ def save_interaction_values(interactions_path, all_products):
 
     save_csv('Interactions.csv', new_csv)
     save_csv('Products.csv', products)
-    save_csv('Users.csv', [userIds])
+    save_csv('Users.csv', users)
 
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
@@ -155,6 +159,9 @@ def load_csv_list(filepath):
     with open(filepath, newline='', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile, delimiter=';')
         return [row for row in reader]
+    
+def load_csv_df(filepath, header=None):
+    return pd.read_csv(filepath, delimiter=';', header=header)
     
 def load_excel_list(filepath):
     """Load Excel data from a file and return a list of rows as dictionaries."""
