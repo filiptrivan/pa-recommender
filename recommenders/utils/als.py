@@ -8,8 +8,8 @@ import numpy as np
 import implicit
 from scipy.sparse import csr_matrix
 
-from recommenders.DTO.ProductDTO import ProductDTO
-from recommenders.utils.shared import *
+from DTO.ProductDTO import ProductDTO
+from utils.shared import *
 
 SKU = 0
 STOCK = 1

@@ -1,16 +1,15 @@
 import logging
 import warnings
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
-import sys
 import os
-sys.path.append(os.path.abspath(".."))  # Adds the project root to sys.path
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
+from utils.als import *
 import pprint
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("implicit")
 
-from recommenders.utils.als import *
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
