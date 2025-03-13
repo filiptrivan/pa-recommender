@@ -1,15 +1,22 @@
 from functools import wraps
+import logging
 import os
 import io
 import csv
 import json
-from flask import jsonify, request
+import flask
+from flask import Response, jsonify, request
+from werkzeug.exceptions import HTTPException
 import pandas as pd
 from collections import defaultdict
 import numpy as np
 from math import exp
 from math import log1p
 from azure.storage.blob import BlobServiceClient
+from exceptions.BusinessException import BusinessException
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 #region Data Manipulation
 
@@ -106,7 +113,7 @@ def test_recency_bonus(days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE
     first_days = {day: get_rating_based_on_recency(day, interaction_weight, decay_scale) for day in range(1, days)}
 
     for day, value in first_days.items():
-        print(f"Day {day}: {value:.4f}")
+        logger.info(f"Day {day}: {value:.4f}")
 
 def parse_and_format_timestamp(value): 
     if isinstance(value, str):
@@ -147,9 +154,8 @@ def get_dense_interactions_matrix(clean_interactions: list):
     
     num_products, num_users = Y.shape
 
-    print("Y", Y.shape)
-    print("num_products", num_products)
-    print("num_users", num_users)
+    logger.info("num_products: %d", num_products)
+    logger.info("num_users: %d", num_users)
 
     return Y
 
@@ -165,6 +171,34 @@ def require_api_key(f):
             return jsonify({"message": "Unauthorized, invalid or missing API key"}), 401
         return f(*args, **kwargs)
     return decorated
+
+def handle_exception(ex: Exception):
+    exception = None
+
+    if os.getenv('ENV') == 'Dev':
+        exception = str(ex)
+
+    if isinstance(ex, BusinessException):
+        code = ex.code
+        log_level = logging.WARN
+        message = ex.message
+    else:
+        code = 500
+        log_level = logging.ERROR
+        message = "An error occurred in the system, our team has been informed and will fix it as soon as possible. Thank you for your patience."
+
+    logger.log(log_level, str(ex))
+
+    response = Response(
+        response=json.dumps({
+            "message": message,
+            "exception": exception,
+        }),
+        status=code,
+        mimetype='application/json'
+    )
+
+    return response
 
 def load_csv_dict(filepath):
     """Load CSV data from a file and return a list of rows."""

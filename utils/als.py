@@ -103,25 +103,3 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
 
 def init_product(row: Series):
     return ProductDTO(Id=row[SKU], Stock=int(row[STOCK]), Status=row[STATUS], Visibility=row[VISIBILITY], Active=bool(row[ACTIVE]))
-
-def benchmark_accuracy(sparse_user_product): 
-    output = defaultdict(list) 
-
-    def store_loss(name): 
-        def inner(iteration, elapsed, loss): 
-            print(f"model {name} iteration {iteration} loss {loss:.5f}") 
-            output[name].append(loss) 
-
-        return inner 
-
-    for steps in [2, 3, 4]: 
-        model = implicit.als.AlternatingLeastSquares( 
-            factors=100, 
-            use_gpu=False, 
-            regularization=0.1, 
-            iterations=25, 
-            calculate_training_loss=True, 
-        ) 
-        model.cg_steps = steps 
-        model.fit_callback = store_loss(f"cg{steps}") 
-        model.fit(sparse_user_product) 
