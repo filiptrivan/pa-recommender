@@ -1,9 +1,14 @@
+from functools import wraps
+import os
+import io
 import csv
+from flask import jsonify, request
 import pandas as pd
 from collections import defaultdict
 import numpy as np
 from math import exp
 from math import log1p
+from azure.storage.blob import BlobServiceClient
 
 #region Data Manipulation
 
@@ -14,19 +19,16 @@ INTERACTION_COL_NAME = 'Interaction'
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-def save_interaction_values(interactions_path, all_products):
+def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
-    interactions = load_excel_list(interactions_path)
-
     pivot_data = defaultdict(dict)
-
     grouped_ratings = defaultdict(list)
 
-    for row in interactions:
+    for _, row in raw_interactions.iterrows():
         key = (str(row[PRODUCT_COL_NAME]), row[USER_COL_NAME])
         grouped_ratings[key].append(row)
 
-    for (productId, userId), rows in grouped_ratings.items():
+    for (product_id, user_id), rows in grouped_ratings.items():
         rating = 0
         
         for i in range(len(rows)):
@@ -34,55 +36,55 @@ def save_interaction_values(interactions_path, all_products):
 
             # FT: Recency bonus
             timestamp = parse_and_format_timestamp(row['Timestamp'])
-            # helper = row['Timestamp']
-            # print(f'{helper} -> {timestamp}')
             diff_days  = (now - timestamp).total_seconds() / (60 * 60 * 24)
 
             if diff_days < 0:
                 raise ValueError("The timestamp is in the future; please provide a valid past timestamp.")
 
-            if row[INTERACTION_COL_NAME] == 'Bought':
+            interaction = row[INTERACTION_COL_NAME]
+            if interaction == 'Bought':
                 rating += get_rating_based_on_recency(diff_days, 1)
-            elif row[INTERACTION_COL_NAME] == 'PutInCart':
+            elif interaction == 'PutInCart':
                 rating += get_rating_based_on_recency(diff_days, 0.5)
-            elif row[INTERACTION_COL_NAME] == 'PutInFavorites':
+            elif interaction == 'PutInFavorites':
                 rating += get_rating_based_on_recency(diff_days, 0.3)
-            elif row[INTERACTION_COL_NAME] == 'Clicked':
+            elif interaction == 'Clicked':
                 rating += get_rating_based_on_recency(diff_days, 0.1)
             else:
                 raise ValueError("Interaction value doesn't exist.")
 
         rating += get_multiple_interaction_bonus(len(rows), rating)
 
-        pivot_data[productId][userId] = '' if rating == 0  else rating
+        pivot_data[product_id][user_id] = None if rating == 0 else rating
 
-    productIds = sorted(pivot_data.keys())
-    userIds = sorted({user[USER_COL_NAME] for user in interactions})
+    product_ids = sorted(pivot_data.keys())
+    user_ids = sorted(raw_interactions[USER_COL_NAME].unique())
     
+    # FT: Needs to use list for products instead of numpy array because it contains different data types
     products = []
     users = []
-    new_csv = []
+    clean_interactions = []
 
-    for user_id in userIds:
-        users.append([user_id])
+    for user_id in user_ids:
+        users.append(user_id)
 
-    for productId in productIds:
-        row = []
-        for userId in userIds:
-            row.append(pivot_data[productId].get(userId, ''))
-        product = next((x for x in all_products if x['SKU'] == productId), None)
-        products.append([
-            productId,
-            product.get('Stock', '0') if product else '0',
-            product.get('Status', 'Draft') if product else 'Draft',
-            product.get('Visibility', 'Private') if product else 'Private',
-            int(product.get('Active', '0')) if product else '0'
-        ])
-        new_csv.append(row)
+    for product_id in product_ids:
+        row = [pivot_data[product_id].get(user_id, '') for user_id in user_ids]
+        product_df: pd.DataFrame = raw_products.loc[raw_products['SKU'] == product_id]
 
-    save_csv('Interactions.csv', new_csv)
-    save_csv('Products.csv', products)
-    save_csv('Users.csv', users)
+        if not product_df.empty:
+            product = product_df.iloc[0]
+            stock = int(product.get('Stock', 0))
+            status = product.get('Status', 'Draft')
+            visibility = product.get('Visibility', 'Private')
+            active = bool(product.get('Active', False))
+        else:
+            stock, status, visibility, active = 0, 'Draft', 'Private', False
+
+        products.append([product_id, stock, status, visibility, active])
+        clean_interactions.append(row)
+    
+    return clean_interactions, products, users
 
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
@@ -131,22 +133,37 @@ def switch_months_and_days(value):
     else:
         return dt
 
-def get_data():
-    Y_with_nan = load_csv_np("Interactions.csv", skip_header=False)
-    num_users = Y_with_nan.shape[1]
-    num_products = Y_with_nan.shape[0]
+def get_dense_interactions_matrix(clean_interactions: list):
+    arr = np.array(clean_interactions)
+    
+    def convert(val):
+        if val == '' or val is None:
+            return 0.0
+        return float(val)
 
-    Y = np.nan_to_num(Y_with_nan, nan=0)
+    convert_vec = np.vectorize(convert)
+    Y = convert_vec(arr)
+    
+    num_products, num_users = Y.shape
 
     print("Y", Y.shape)
-    print("num_products",   num_products)
-    print("num_users",    num_users)
+    print("num_products", num_products)
+    print("num_users", num_users)
 
     return Y
 
 #endregion
 
 #region Helpers
+
+def require_api_key(f):
+    @wraps(f) # https://stackoverflow.com/questions/308999/what-does-functools-wraps-do
+    def decorated(*args, **kwargs):
+        api_key = request.headers.get('X-API-KEY')
+        if not api_key or api_key != os.getenv('API_KEY'):
+            return jsonify({"message": "Unauthorized, invalid or missing API key"}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 def load_csv_dict(filepath):
     """Load CSV data from a file and return a list of rows."""
@@ -167,6 +184,18 @@ def load_excel_list(filepath):
     """Load Excel data from a file and return a list of rows as dictionaries."""
     df = pd.read_excel(filepath)
     return df.to_dict(orient='records')
+
+def load_excel_from_azure(file_name):
+    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
+    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
+    blob_client = container_client.get_blob_client(file_name)
+
+    stream = blob_client.download_blob()
+    csv_content = stream.readall()
+
+    df = pd.read_csv(io.BytesIO(csv_content))
+
+    return df
 
 def load_csv_np(filepath, skip_header):
     return np.genfromtxt(filepath, delimiter=";", skip_header=skip_header)
