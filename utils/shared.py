@@ -2,6 +2,7 @@ from functools import wraps
 import os
 import io
 import csv
+import json
 from flask import jsonify, request
 import pandas as pd
 from collections import defaultdict
@@ -186,16 +187,40 @@ def load_excel_list(filepath):
     return df.to_dict(orient='records')
 
 def load_excel_from_azure(file_name):
+    file_stream = load_file_stream_from_azure(file_name)
+    df = pd.read_csv(io.BytesIO(file_stream))
+    return df
+
+def load_dict_from_azure(file_name):
+    file_stream = load_file_stream_from_azure(file_name)
+
+    if file_stream is None:
+        return None
+
+    dictionary = json.load(io.BytesIO(file_stream))
+    return dictionary
+
+def load_file_stream_from_azure(file_name):
     blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
     container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
     blob_client = container_client.get_blob_client(file_name)
 
-    stream = blob_client.download_blob()
-    csv_content = stream.readall()
+    try:
+        stream = blob_client.download_blob()
+    except:
+        return None
 
-    df = pd.read_csv(io.BytesIO(csv_content))
+    file_stream = stream.readall()
 
-    return df
+    return file_stream
+
+def save_dictionary_to_azure(file_name, dictionary: dict):
+    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
+    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
+    blob_client = container_client.get_blob_client(file_name)
+
+    json_data = json.dumps(dictionary)
+    blob_client.upload_blob(json_data, overwrite=True)
 
 def load_csv_np(filepath, skip_header):
     return np.genfromtxt(filepath, delimiter=";", skip_header=skip_header)
