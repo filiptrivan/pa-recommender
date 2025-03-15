@@ -13,15 +13,19 @@ from utils import als
 from utils import shared
 import pandas as pd
 import pprint
+from azure.monitor.opentelemetry import configure_azure_monitor
 
 from flask import Flask, request, jsonify
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+load_dotenv()
+if os.getenv('ENV') == 'Prod':
+    configure_azure_monitor(connection_string=os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING'))
 
 app = Flask(__name__)
 
-load_dotenv()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 RECOMMENDATIONS_FILE_NAME = os.getenv('RECOMMENDATIONS_FILE_NAME')
 
 lock = threading.Lock()

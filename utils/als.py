@@ -1,6 +1,3 @@
-from collections import defaultdict
-from typing import Any, Hashable
-import pandas as df
 from pandas import DataFrame, Series
 import implicit
 from implicit.nearest_neighbours import bm25_weight
@@ -48,7 +45,7 @@ def get_product_indexes_to_filter(products: list):
 def train_model(sparse_user_product):
     # https://github.com/benfred/implicit/issues/281
     model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=128, calculate_training_loss=True)
-    model.fit(sparse_user_product, show_progress=True)
+    model.fit(sparse_user_product, show_progress=False)
     return model
 
 def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_matrix: csr_matrix, user_ids: list, products: list, filter_items) -> dict:
