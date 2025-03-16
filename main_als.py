@@ -11,6 +11,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 from dotenv import load_dotenv
 from utils import als
 from utils import shared
+from utils import data
 import pandas as pd
 import pprint
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -21,15 +22,15 @@ load_dotenv()
 if os.getenv('ENV') == 'Prod':
     configure_azure_monitor(connection_string=os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING'))
 
-app = Flask(__name__)
-
+logging.basicConfig(level=logging.INFO) # FT: Making level for the whole app
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+
+app = Flask(__name__)
 
 RECOMMENDATIONS_FILE_NAME = os.getenv('RECOMMENDATIONS_FILE_NAME')
 
 lock = threading.Lock()
-recommendation_result_dict = als.load_dict_from_azure(RECOMMENDATIONS_FILE_NAME)
+recommendation_result_dict = data.load_dict_from_azure(RECOMMENDATIONS_FILE_NAME)
 # pprint.pprint(recommendation_result_dict)
 
 @app.errorhandler(Exception)
@@ -41,7 +42,7 @@ def hello_world():
     return "Hello, World!"
 
 @app.route('/get_recommendations', methods=['GET'])
-@als.require_api_key
+@shared.require_api_key
 def get_recommendations():
     user_id = request.args.get('user_id')
 
@@ -52,7 +53,7 @@ def get_recommendations():
         return recommendation_result_dict[user_id]
 
 @app.route('/train_model', methods=['POST'])
-@als.require_api_key
+@shared.require_api_key
 def train_model():
     interactions_file = request.files.get('new_raw_interactions')
     products_file = request.files.get('new_raw_products')
@@ -71,8 +72,8 @@ def train_model():
         global recommendation_result_dict
         recommendation_result_dict = new_recommendation_result_dict
 
-    als.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-if __name__ == '__main__':
+if __name__ == '__main__' and os.getenv('ENV') == 'Dev':
     app.run()

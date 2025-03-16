@@ -7,7 +7,7 @@ import implicit
 from scipy.sparse import csr_matrix
 
 from DTO.ProductDTO import ProductDTO
-from utils.shared import *
+from utils import shared
 
 SKU = 0
 STOCK = 1
@@ -17,9 +17,9 @@ ACTIVE = 4
 
 # FT: We can not pass partial interactions because of timestamp updates
 def get_recommendation_result(raw_interactions: DataFrame, raw_products: DataFrame):
-    clean_interactions, products, user_ids = save_interaction_values(raw_interactions, raw_products)
+    clean_interactions, products, user_ids = shared.save_interaction_values(raw_interactions, raw_products)
 
-    Y = get_dense_interactions_matrix(clean_interactions)
+    Y = shared.get_dense_interactions_matrix(clean_interactions)
     sparse_user_product_matrix = get_sparse_user_product_matrix(Y)
 
     product_indexes_to_filter = get_product_indexes_to_filter(products)

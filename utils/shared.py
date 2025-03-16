@@ -1,20 +1,19 @@
 from functools import wraps
 import logging
 import os
-import io
 import csv
 import json
+import traceback
 from flask import Response, jsonify, request
 import pandas as pd
 from collections import defaultdict
 import numpy as np
 from math import exp
 from math import log1p
-from azure.storage.blob import BlobServiceClient
 from exceptions.BusinessException import BusinessException
+from utils.emailing import Emailing
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 #region Data Manipulation
 
@@ -107,38 +106,6 @@ def get_multiple_interaction_bonus(num_of_interactions, rating):
 def get_rating_based_on_recency(diff_days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
     return interaction_weight * exp(-diff_days / decay_scale) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
 
-def test_recency_bonus(days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
-    first_days = {day: get_rating_based_on_recency(day, interaction_weight, decay_scale) for day in range(1, days)}
-
-    for day, value in first_days.items():
-        logger.info(f"Day {day}: {value:.4f}")
-
-def parse_and_format_timestamp(value): 
-    if isinstance(value, str):
-        timestamp = pd.to_datetime(value, format='%d/%m/%Y')
-    else:
-        timestamp = switch_months_and_days(value)
-    
-    return timestamp
-
-def switch_months_and_days(value):
-    """
-    Correct a date that may have been parsed using a MM/DD/YYYY format
-    when it should be interpreted as DD/MM/YYYY.
-    
-    If the day component (currently in the month position) is 12 or less,
-    swap the month and day. Otherwise, return the original timestamp.
-    """
-    dt = pd.Timestamp(value)
-    if dt.day <= 12:
-        try:
-            corrected = pd.Timestamp(year=dt.year, month=dt.day, day=dt.month)
-            return corrected
-        except ValueError:
-            return dt
-    else:
-        return dt
-
 def get_dense_interactions_matrix(clean_interactions: list):
     arr = np.array(clean_interactions)
     
@@ -174,7 +141,7 @@ def handle_exception(ex: Exception):
     exception = None
 
     if os.getenv('ENV') == 'Dev':
-        exception = str(ex)
+        exception = traceback.format_exc()
 
     if isinstance(ex, BusinessException):
         code = ex.code
@@ -184,8 +151,9 @@ def handle_exception(ex: Exception):
         code = 500
         log_level = logging.ERROR
         message = "An error occurred in the system, our team has been informed and will fix it as soon as possible. Thank you for your patience."
+        Emailing().send_email(os.getenv('EXCEPTION_EMAILS'), traceback.format_exc(), 'Unhandled exception in pa-recommender')
 
-    logger.log(log_level, str(ex))
+    logger.log(log_level, traceback.format_exc())
 
     response = Response(
         response=json.dumps({
@@ -198,75 +166,42 @@ def handle_exception(ex: Exception):
 
     return response
 
-def load_csv_dict(filepath):
-    """Load CSV data from a file and return a list of rows."""
-    with open(filepath, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile, delimiter=';')
-        return [row for row in reader]
-
-def load_csv_list(filepath):
-    """Load CSV data from a file and return a list of rows."""
-    with open(filepath, newline='', encoding='utf-8') as csvfile:
-        reader = csv.reader(csvfile, delimiter=';')
-        return [row for row in reader]
-    
-def load_csv_df(filepath, header=None):
-    return pd.read_csv(filepath, delimiter=';', header=header)
-    
-def load_excel_list(filepath):
-    """Load Excel data from a file and return a list of rows as dictionaries."""
-    df = pd.read_excel(filepath)
-    return df.to_dict(orient='records')
-
-def load_excel_from_azure(file_name):
-    file_stream = load_file_stream_from_azure(file_name)
-    df = pd.read_csv(io.BytesIO(file_stream))
-    return df
-
-def load_dict_from_azure(file_name):
-    file_stream = load_file_stream_from_azure(file_name)
-
-    if file_stream is None:
-        return None
-
-    dictionary = json.load(io.BytesIO(file_stream))
-    return dictionary
-
-def load_file_stream_from_azure(file_name):
-    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
-    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
-    blob_client = container_client.get_blob_client(file_name)
-
-    try:
-        stream = blob_client.download_blob()
-    except:
-        return None
-
-    file_stream = stream.readall()
-
-    return file_stream
-
-def save_dictionary_to_azure(file_name, dictionary: dict):
-    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
-    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
-    blob_client = container_client.get_blob_client(file_name)
-
-    json_data = json.dumps(dictionary)
-    blob_client.upload_blob(json_data, overwrite=True)
-
-def load_csv_np(filepath, skip_header):
-    return np.genfromtxt(filepath, delimiter=";", skip_header=skip_header)
-
-def save_csv(filename, rows):
-    """Save a list of rows to a CSV file."""
-    with open(filename, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile, delimiter=';')
-        writer.writerows(rows)
-
 def try_float(value):
     try:
         return float(value) if value is not None else None
     except ValueError:
         return None
+
+def test_recency_bonus(days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
+    first_days = {day: get_rating_based_on_recency(day, interaction_weight, decay_scale) for day in range(1, days)}
+
+    for day, value in first_days.items():
+        logger.info(f"Day {day}: {value:.4f}")
+
+def parse_and_format_timestamp(value): 
+    if isinstance(value, str):
+        timestamp = pd.to_datetime(value, format='%d/%m/%Y')
+    else:
+        timestamp = switch_months_and_days(value)
+    
+    return timestamp
+
+def switch_months_and_days(value):
+    """
+    Correct a date that may have been parsed using a MM/DD/YYYY format
+    when it should be interpreted as DD/MM/YYYY.
+    
+    If the day component (currently in the month position) is 12 or less,
+    swap the month and day. Otherwise, return the original timestamp.
+    """
+    dt = pd.Timestamp(value)
+    if dt.day <= 12:
+        try:
+            corrected = pd.Timestamp(year=dt.year, month=dt.day, day=dt.month)
+            return corrected
+        except ValueError:
+            return dt
+    else:
+        return dt
 
 #endregion
