@@ -24,6 +24,7 @@ class Emailing:
         msg.attach(MIMEText(message, 'plain'))
         
         with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+            server.set_debuglevel(1)
             server.starttls()
             server.login(self.sender_email, self.sender_password)
             server.sendmail(self.sender_email, recipients, msg.as_string())

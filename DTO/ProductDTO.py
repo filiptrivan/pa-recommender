@@ -8,7 +8,7 @@ class ProductDTO(BaseModel):
     Price: Optional[float] = None
     Stock: Optional[int] = None
     Manufacturer: Optional[str] = None
-    Category: Optional[str] = None
+    Categories: Optional[str] = None
     Status: Optional[str] = None
     Visibility: Optional[str] = None
     Active: Optional[bool] = None

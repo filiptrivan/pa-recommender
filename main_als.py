@@ -2,9 +2,8 @@ from io import StringIO
 import logging
 import threading
 import warnings
-
+import requests
 from exceptions.BusinessException import BusinessException
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
@@ -65,6 +64,29 @@ def train_model():
 
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode('utf-8')))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode('utf-8')))
+
+    new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
+
+    with lock:
+        global recommendation_result_dict
+        recommendation_result_dict = new_recommendation_result_dict
+
+    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    return jsonify({"message": "Model trained and recommendations updated"}), 200
+
+@app.route('/train_model2', methods=['GET'])
+@shared.require_api_key
+def train_model2():
+    interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
+    productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
+
+    if not interactionsResponse:
+        raise BusinessException("Interactions file is required")
+    if not productsResponse:
+        raise BusinessException("Products file is required")
+
+    new_raw_interactions = pd.DataFrame(interactionsResponse.json())
+    new_raw_products = pd.DataFrame(productsResponse.json())
 
     new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
 

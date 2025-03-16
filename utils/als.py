@@ -9,11 +9,15 @@ from scipy.sparse import csr_matrix
 from DTO.ProductDTO import ProductDTO
 from utils import shared
 
-SKU = 0
+ID = 0
 STOCK = 1
 STATUS = 2
 VISIBILITY = 3
 ACTIVE = 4
+TITLE = 5
+CATEGORIES = 6
+MANUFACTURER = 7
+PRICE = 8
 
 # FT: We can not pass partial interactions because of timestamp updates
 def get_recommendation_result(raw_interactions: DataFrame, raw_products: DataFrame):
@@ -99,4 +103,16 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
     return result
 
 def init_product(row: Series):
-    return ProductDTO(Id=row[SKU], Stock=int(row[STOCK]), Status=row[STATUS], Visibility=row[VISIBILITY], Active=bool(row[ACTIVE]))
+    return ProductDTO(
+        Id=row[ID], 
+        SKU=row[ID],
+        Stock=int(row[STOCK]), 
+        Status=row[STATUS], 
+        Visibility=row[VISIBILITY], 
+        Active=bool(row[ACTIVE]),
+        Title=row[TITLE],
+        Categories=row[CATEGORIES],
+        Manufacturer=row[MANUFACTURER],
+        Price=row[PRICE],
+
+    )

@@ -17,15 +17,26 @@ logger = logging.getLogger(__name__)
 
 #region Data Manipulation
 
-PRODUCT_COL_NAME = 'ProductId'
-USER_COL_NAME = 'UserId'
-INTERACTION_COL_NAME = 'Interaction'
+PRODUCT_COL_NAME = 'productId'
+USER_COL_NAME = 'userId'
+INTERACTION_COL_NAME = 'interaction'
+TIMESTAMP_COL_NAME = 'timestamp'
+
+ID_COLUMN_NAME = 'id'
+STOCK_COLUMN_NAME = 'stock'
+STATUS_COLUMN_NAME = 'status'
+VISIBILITY_COLUMN_NAME = 'visibility'
+ACTIVE_COLUMN_NAME = 'active'
+TITLE_COLUMN_NAME = 'title'
+CATEGORIES_COLUMN_NAME = 'categories'
+MANUFACTURER_COLUMN_NAME = 'manufacturer'
+PRICE_COLUMN_NAME = 'price'
 
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
 def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    now = pd.Timestamp.now()
+    now = pd.Timestamp.now(tz=None)
     pivot_data = defaultdict(dict)
     grouped_ratings = defaultdict(list)
 
@@ -36,27 +47,8 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
     for (product_id, user_id), rows in grouped_ratings.items():
         rating = 0
         
-        for i in range(len(rows)):
-            row = rows[i]
-
-            # FT: Recency bonus
-            timestamp = parse_and_format_timestamp(row['Timestamp'])
-            diff_days  = (now - timestamp).total_seconds() / (60 * 60 * 24)
-
-            if diff_days < 0:
-                raise ValueError("The timestamp is in the future; please provide a valid past timestamp.")
-
-            interaction = row[INTERACTION_COL_NAME]
-            if interaction == 'Bought':
-                rating += get_rating_based_on_recency(diff_days, 1)
-            elif interaction == 'PutInCart':
-                rating += get_rating_based_on_recency(diff_days, 0.5)
-            elif interaction == 'PutInFavorites':
-                rating += get_rating_based_on_recency(diff_days, 0.3)
-            elif interaction == 'Clicked':
-                rating += get_rating_based_on_recency(diff_days, 0.1)
-            else:
-                raise ValueError("Interaction value doesn't exist.")
+        for row in rows:
+            rating += get_rating_based_on_recency(now, row)
 
         rating += get_multiple_interaction_bonus(len(rows), rating)
 
@@ -75,18 +67,10 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
 
     for product_id in product_ids:
         row = [pivot_data[product_id].get(user_id, '') for user_id in user_ids]
-        product_df: pd.DataFrame = raw_products.loc[raw_products['SKU'] == product_id]
+        product_df: pd.DataFrame = raw_products.loc[raw_products[ID_COLUMN_NAME] == product_id]
 
-        if not product_df.empty:
-            product = product_df.iloc[0]
-            stock = int(product.get('Stock', 0))
-            status = product.get('Status', 'Draft')
-            visibility = product.get('Visibility', 'Private')
-            active = bool(product.get('Active', False))
-        else:
-            stock, status, visibility, active = 0, 'Draft', 'Private', False
+        append_product(product_id, product_df, products)
 
-        products.append([product_id, stock, status, visibility, active])
         clean_interactions.append(row)
     
     return clean_interactions, products, users
@@ -103,7 +87,27 @@ def get_multiple_interaction_bonus(num_of_interactions, rating):
     return min(bonus, 1)
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
-def get_rating_based_on_recency(diff_days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
+def get_rating_based_on_recency(now: pd.Timestamp, row) -> float:
+    # FT: Recency bonus
+    timestamp = pd.to_datetime(row[TIMESTAMP_COL_NAME]).tz_localize(None)
+    diff_days  = (now - timestamp).total_seconds() / (60 * 60 * 24)
+
+    if diff_days < 0:
+        raise BusinessException("The timestamp is in the future. Please provide a valid past timestamp.")
+
+    interaction = row[INTERACTION_COL_NAME]
+    if interaction == 'Bought':
+        return get_recency_bonus(diff_days, 1)
+    elif interaction == 'PutInCart':
+        return get_recency_bonus(diff_days, 0.5)
+    elif interaction == 'PutInFavorites':
+        return get_recency_bonus(diff_days, 0.3)
+    elif interaction == 'Clicked':
+        return get_recency_bonus(diff_days, 0.1)
+    else:
+        raise BusinessException("Interaction value doesn't exist (valid: Bought, PutInCart, PutInFavorites, Clicked).")
+
+def get_recency_bonus(diff_days, interaction_weight, decay_scale=RECENCY_DECAY_SCALE):
     return interaction_weight * exp(-diff_days / decay_scale) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
 
 def get_dense_interactions_matrix(clean_interactions: list):
@@ -165,6 +169,29 @@ def handle_exception(ex: Exception):
     )
 
     return response
+
+def append_product(product_id: str, product_df: pd.DataFrame, products: list):
+    if not product_df.empty:
+        product = product_df.iloc[0]
+        stock = int(product.get(STOCK_COLUMN_NAME, 0))
+        status = product.get(STATUS_COLUMN_NAME, 'Draft')
+        visibility = product.get(VISIBILITY_COLUMN_NAME, 'Private')
+        active = bool(product.get(ACTIVE_COLUMN_NAME, False))
+        title = product.get(TITLE_COLUMN_NAME, None)
+        categories = product.get(CATEGORIES_COLUMN_NAME, None)
+        manufacturer = product.get(MANUFACTURER_COLUMN_NAME, None)
+        price = product.get(PRICE_COLUMN_NAME, None)
+    else:
+        stock = 0
+        status = 'Draft'
+        visibility = 'Private'
+        active = False
+        title = None
+        categories = None
+        manufacturer = None
+        price = None
+
+    products.append([product_id, stock, status, visibility, active, title, categories, manufacturer, price])
 
 def try_float(value):
     try:
