@@ -12,6 +12,7 @@ from utils import als
 from utils import shared
 from utils import data
 import pandas as pd
+import numpy as np
 import pprint
 from azure.monitor.opentelemetry import configure_azure_monitor
 
