@@ -91,11 +91,12 @@ def train_model2():
 
     new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
 
+    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    
     with lock:
         global recommendation_result_dict
         recommendation_result_dict = new_recommendation_result_dict
 
-    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
 if __name__ == '__main__' and os.getenv('ENV') == 'Dev':
