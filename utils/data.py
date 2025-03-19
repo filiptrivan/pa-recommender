@@ -54,7 +54,7 @@ def load_file_stream_from_azure(file_name):
 
     return file_stream
 
-def save_dictionary_to_azure(file_name, dictionary: dict):
+def save_dictionary_to_azure(file_name: str, dictionary: dict):
     blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
     container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
     blob_client = container_client.get_blob_client(file_name)

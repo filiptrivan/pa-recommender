@@ -107,7 +107,7 @@ def get_multiple_interaction_bonus(grouped_interactions_count, grouped_interacti
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
 def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.DataFrame) -> pd.Series:
-    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format="%d.%m.%Y. %H:%M")
+    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format="%d.%m.%Y. %H:%M:%S")
     diff_days = (now - timestamps) / np.timedelta64(1, 'D')
 
     if (diff_days < 0).any():

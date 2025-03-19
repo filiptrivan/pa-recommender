@@ -1,3 +1,4 @@
+from collections import defaultdict
 import pandas as pd
 import implicit
 from implicit.recommender_base import RecommenderBase
@@ -32,7 +33,8 @@ def train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # https://github.com/benfred/implicit/issues/281
+    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
     sb.append(shared.get_duration_message(now))
@@ -57,7 +59,7 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
             products_for_recommendation = []
             for product_index, score in zip(product_indexes[i], scores[i]):
                 product = products.iloc[product_index]
-                productDTO = init_product(product)
+                productDTO = init_productDTO(product)
                 products_for_recommendation.append(productDTO.__dict__)
             recommendations_dict[user_id] = products_for_recommendation
     
@@ -92,12 +94,12 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
     top_10_products = valid_products.iloc[top_10_valid_indices]
 
     for _, product in top_10_products.iterrows():
-        productDTO = init_product(product)
+        productDTO = init_productDTO(product)
         result.append(productDTO.__dict__)
 
     return result
 
-def init_product(row: pd.Series):
+def init_productDTO(row: pd.Series):
     return ProductDTO(
         Id=row[ID_COL_NAME], 
         SKU=row[ID_COL_NAME],
@@ -110,3 +112,10 @@ def init_product(row: pd.Series):
         Manufacturer=row[MANUFACTURER_COL_NAME],
         Price=row[PRICE_COL_NAME],
     )
+
+# https://github.com/benfred/implicit/issues/281
+def store_loss(output: StringBuilder): 
+    def inner(iteration, elapsed, loss): 
+        output.append(f'Loss {loss:.5f}\n') 
+
+    return inner

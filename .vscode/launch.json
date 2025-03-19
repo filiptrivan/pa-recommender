@@ -8,7 +8,7 @@
             "type": "debugpy",
             "request": "launch",
             "stopOnEntry": false,
-            "program": "${workspaceRoot}/main_als.py",
+            "program": "${workspaceRoot}/main.py",
             "console": "integratedTerminal",
             "args": [
                 "run",
