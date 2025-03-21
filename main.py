@@ -4,6 +4,7 @@ import threading
 import warnings
 import requests
 from exceptions.BusinessException import BusinessException
+from utils.classes.Settings import Settings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
@@ -15,22 +16,19 @@ import pandas as pd
 import numpy as np
 import pprint
 from azure.monitor.opentelemetry import configure_azure_monitor
-
 from flask import Flask, request, jsonify
 
-load_dotenv()
-if os.getenv('ENV') == 'Prod':
-    configure_azure_monitor(connection_string=os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING'))
+
+if Settings().ENV == 'Prod':
+    configure_azure_monitor(connection_string=Settings().APPLICATIONINSIGHTS_CONNECTION_STRING)
 
 logging.basicConfig(level=logging.INFO) # FT: Making level for the whole app
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-RECOMMENDATIONS_FILE_NAME = os.getenv('RECOMMENDATIONS_FILE_NAME')
-
 lock = threading.Lock()
-recommendation_result_dict = data.load_dict_from_azure(RECOMMENDATIONS_FILE_NAME)
+recommendation_result_dict = data.load_dict_from_azure(Settings().RECOMMENDATIONS_FILE_NAME)
 # pprint.pprint(recommendation_result_dict)
 
 @app.errorhandler(Exception)
@@ -91,7 +89,7 @@ def train_model2():
 
     new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
 
-    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     
     with lock:
         global recommendation_result_dict
@@ -99,5 +97,5 @@ def train_model2():
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-if __name__ == '__main__' and os.getenv('ENV') == 'Dev':
+if __name__ == '__main__' and Settings().ENV == 'Dev':
     app.run()

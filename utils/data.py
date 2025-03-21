@@ -6,6 +6,8 @@ import pandas as pd
 import os
 import numpy as np
 
+from utils.classes.Settings import Settings
+
 def load_csv_dict(filepath):
     """Load CSV data from a file and return a list of rows."""
     with open(filepath, newline='', encoding='utf-8') as csvfile:
@@ -41,8 +43,8 @@ def load_dict_from_azure(file_name):
     return dictionary
 
 def load_file_stream_from_azure(file_name):
-    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
-    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
+    blob_service_client = BlobServiceClient.from_connection_string(Settings().AZURE_STORAGE_CONNECTION_STRING)
+    container_client = blob_service_client.get_container_client(Settings().CONTAINER_NAME)
     blob_client = container_client.get_blob_client(file_name)
 
     try:
@@ -55,8 +57,8 @@ def load_file_stream_from_azure(file_name):
     return file_stream
 
 def save_dictionary_to_azure(file_name: str, dictionary: dict):
-    blob_service_client = BlobServiceClient.from_connection_string(os.getenv('AZURE_STORAGE_CONNECTION_STRING'))
-    container_client = blob_service_client.get_container_client(os.getenv('CONTAINER_NAME'))
+    blob_service_client = BlobServiceClient.from_connection_string(Settings().AZURE_STORAGE_CONNECTION_STRING)
+    container_client = blob_service_client.get_container_client(Settings().CONTAINER_NAME)
     blob_client = container_client.get_blob_client(file_name)
 
     json_data = json.dumps(dictionary)

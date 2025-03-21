@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 import pandas as pd
 import implicit
@@ -6,6 +7,7 @@ import numpy as np
 import implicit
 from scipy.sparse import csr_matrix
 
+from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from DTO.ProductDTO import ProductDTO
 from utils import shared
@@ -43,11 +45,17 @@ def train_model(sparse_user_product):
     return model
 
 def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_matrix: csr_matrix, user_ids: pd.Index, products: pd.DataFrame) -> dict:
-    product_indexes_to_filter = get_product_indexes_to_filter(products)
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
 
-    recommendations_dict = {}
+    product_indexes_to_filter = get_product_indexes_to_filter(products)
+    sb.append(f'Products to filter count: {len(product_indexes_to_filter)}')
+
+    recommendations_dict = defaultdict(list)
     
     recommendations_dict['top_ten_overall_recommendations'] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
+    sb.append(f"Top ten overall recommendations: {', '.join(recommendations_dict['top_ten_overall_recommendations'])}")
+
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
     
@@ -63,6 +71,11 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
                 products_for_recommendation.append(productDTO.__dict__)
             recommendations_dict[user_id] = products_for_recommendation
     
+    sb.append(f"Top ten {Settings().EMAIL_RECOMMENDATIONS_TEST} recommendations: {', '.join(recommendations_dict[Settings().EMAIL_RECOMMENDATIONS_TEST])}")
+
+    sb.append(shared.get_duration_message(now))
+    Emailing().send_email_and_log_info("Making recommendations", sb.__str__())
+
     return recommendations_dict
 
 def get_product_indexes_to_filter(products: pd.DataFrame) -> pd.Index:

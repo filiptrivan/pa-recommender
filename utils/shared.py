@@ -14,6 +14,7 @@ import numpy as np
 from math import exp
 from math import log1p
 from exceptions.BusinessException import BusinessException
+from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
 # from implicit.nearest_neighbours import bm25_weight
@@ -153,7 +154,7 @@ def require_api_key(f):
     @wraps(f) # https://stackoverflow.com/questions/308999/what-does-functools-wraps-do
     def decorated(*args, **kwargs):
         api_key = request.headers.get('X-API-KEY')
-        if not api_key or api_key != os.getenv('API_KEY'):
+        if not api_key or api_key != Settings().API_KEY:
             return jsonify({"message": "Unauthorized, invalid or missing API key"}), 401
         return f(*args, **kwargs)
     return decorated
@@ -161,7 +162,7 @@ def require_api_key(f):
 def handle_exception(ex: Exception):
     exception = None
 
-    if os.getenv('ENV') == 'Dev':
+    if Settings().ENV == 'Dev':
         exception = traceback.format_exc()
 
     if isinstance(ex, BusinessException):
@@ -172,7 +173,7 @@ def handle_exception(ex: Exception):
         code = 500
         log_level = logging.ERROR
         message = "An error occurred in the system, our team has been informed and will fix it as soon as possible. Thank you for your patience."
-        Emailing().send_email(os.getenv('EXCEPTION_EMAILS'), 'Unhandled exception in pa-recommender', traceback.format_exc())
+        Emailing().send_email(Settings().EXCEPTION_EMAILS, 'Unhandled exception in pa-recommender', traceback.format_exc())
 
     logger.log(log_level, traceback.format_exc())
 
