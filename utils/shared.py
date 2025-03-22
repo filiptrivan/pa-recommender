@@ -175,7 +175,7 @@ def handle_exception(ex: Exception):
         message = "An error occurred in the system, our team has been informed and will fix it as soon as possible. Thank you for your patience."
         Emailing().send_email(Settings().EXCEPTION_EMAILS, 'Unhandled exception in pa-recommender', traceback.format_exc())
 
-    logger.log(log_level, traceback.format_exc())
+    logger.log(log_level, f"Request path: '{request.path if request else None}'\n{traceback.format_exc()}")
 
     response = flask.Response(
         response=json.dumps({

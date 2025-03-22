@@ -8,7 +8,6 @@ from utils.classes.Settings import Settings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
-from dotenv import load_dotenv
 from utils import als
 from utils import shared
 from utils import data
@@ -17,6 +16,8 @@ import numpy as np
 import pprint
 from azure.monitor.opentelemetry import configure_azure_monitor
 from flask import Flask, request, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 
 if Settings().ENV == 'Prod':
@@ -26,6 +27,12 @@ logging.basicConfig(level=logging.INFO) # FT: Making level for the whole app
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["100 per hour"]
+)
 
 lock = threading.Lock()
 recommendation_result_dict = data.load_dict_from_azure(Settings().RECOMMENDATIONS_FILE_NAME)
@@ -97,5 +104,5 @@ def train_model2():
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-if __name__ == '__main__' and Settings().ENV == 'Dev':
+if __name__ == '__main__':
     app.run()
