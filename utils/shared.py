@@ -47,12 +47,17 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
     sb.append(f'Interactions count: {len(raw_interactions)}\n')
     sb.append(f'Raw products not null fields count:\n{raw_products.count()}\n')
 
+    raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
+    raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
+    raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
+
     # Pre-cast to category for faster grouping and later extraction of codes
     raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
     raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype('category')
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
+    # FT: Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
         [PRODUCT_COL_NAME, USER_COL_NAME],
         observed=True
@@ -94,7 +99,7 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Data cleaning", sb.__str__())
 
-    return clean_sparse_interactions, products, user_ids
+    return clean_sparse_interactions, products, user_ids.astype(str)
 
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1

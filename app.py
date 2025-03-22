@@ -68,16 +68,17 @@ def train_model():
     if not products_file:
         raise BusinessException("Products file is required")
 
-    new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode('utf-8')))
-    new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode('utf-8')))
+    new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
+    new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
     new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
 
+    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    
     with lock:
         global recommendation_result_dict
         recommendation_result_dict = new_recommendation_result_dict
 
-    data.save_dictionary_to_azure(RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
 @app.route('/train_model2', methods=['GET'])

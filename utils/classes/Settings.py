@@ -12,7 +12,7 @@ class Settings(metaclass=Singleton):
     CONTAINER_NAME = None
     RECOMMENDATIONS_FILE_NAME = None
     APPLICATIONINSIGHTS_CONNECTION_STRING = None
-    EMAIL_RECOMMENDATIONS_TEST = None
+    TEST_RECOMMENDATIONS_EMAIL = None
 
     def __init__(self):
         load_dotenv()
@@ -25,4 +25,4 @@ class Settings(metaclass=Singleton):
         self.CONTAINER_NAME = os.getenv('CONTAINER_NAME')
         self.RECOMMENDATIONS_FILE_NAME = os.getenv('RECOMMENDATIONS_FILE_NAME')
         self.APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING')
-        self.EMAIL_RECOMMENDATIONS_TEST = os.getenv('EMAIL_RECOMMENDATIONS_TEST')
+        self.TEST_RECOMMENDATIONS_EMAIL = os.getenv('TEST_RECOMMENDATIONS_EMAIL')

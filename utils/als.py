@@ -63,7 +63,7 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
         batch = to_generate[startidx : startidx + batch_size]
         product_indexes, scores = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
         for i, user_index in enumerate(batch):
-            user_id = str(user_ids[user_index])
+            user_id = user_ids[user_index]
             products_for_recommendation = []
             for product_index, score in zip(product_indexes[i], scores[i]):
                 product = products.iloc[product_index]
@@ -71,7 +71,14 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
                 products_for_recommendation.append(productDTO.__dict__)
             recommendations_dict[user_id] = products_for_recommendation
     
-    sb.append(f"Top ten '{Settings().EMAIL_RECOMMENDATIONS_TEST}' recommendations: {get_products_for_display(recommendations_dict[Settings().EMAIL_RECOMMENDATIONS_TEST])}\n")
+    test_recommendations_email = Settings().TEST_RECOMMENDATIONS_EMAIL
+
+    if len(recommendations_dict[test_recommendations_email]) == 0:
+        test_recommendations_email = user_ids[0]
+    
+    test_recommendations_for_display = get_products_for_display(recommendations_dict[test_recommendations_email])
+
+    sb.append(f"Top ten '{test_recommendations_email}' recommendations: {test_recommendations_for_display}\n")
 
     sb.append(shared.get_duration_message(now))
     Emailing().send_email_and_log_info("Making recommendations", sb.__str__())
