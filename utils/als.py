@@ -63,7 +63,7 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
         batch = to_generate[startidx : startidx + batch_size]
         product_indexes, scores = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
         for i, user_index in enumerate(batch):
-            user_id = user_ids[user_index]
+            user_id = user_ids[user_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
             products_for_recommendation = []
             for product_index, score in zip(product_indexes[i], scores[i]):
                 product = products.iloc[product_index]
