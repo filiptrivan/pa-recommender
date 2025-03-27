@@ -31,7 +31,7 @@ app = Flask(__name__)
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["100 per hour"]
+    default_limits=["200 per hour"]
 )
 
 lock = threading.Lock()

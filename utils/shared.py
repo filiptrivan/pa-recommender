@@ -68,10 +68,6 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
 
     sb.append(f'Grouped interactions of same users and products count: {len(grouped_interactions)}\n')
 
-    bonus = get_multiple_interaction_bonus(grouped_interactions['interaction_count'], grouped_interactions['total_rating'])
-
-    grouped_interactions['total_rating'] += bonus
-
     product_idx = grouped_interactions[PRODUCT_COL_NAME].cat.codes
     user_idx = grouped_interactions[USER_COL_NAME].cat.codes
 
@@ -104,6 +100,7 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
 # Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
 # When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
 # Slower rise and lower initial values
+# NOTE: Removed from the calculation, because if someone did buy, he surely did clicked on the product also, so i think this bonus doesn't have sense
 def get_multiple_interaction_bonus(grouped_interactions_count, grouped_interactions_rating):
     return np.where(
         grouped_interactions_count > 1,
@@ -171,7 +168,7 @@ def handle_exception(ex: Exception):
     if Settings().ENV == 'Dev':
         exception = traceback.format_exc()
 
-    # FT: Ignore this health check path exception
+    # FT: Ignore this health check path exception https://stackoverflow.com/questions/77921307/getting-a-404-for-get-robots933456-txt
     if Settings().ENV == 'Prod' and request_path == '/robots933456.txt':
         return
 
