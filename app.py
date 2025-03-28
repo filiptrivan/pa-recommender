@@ -71,7 +71,7 @@ def train_model():
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
-    new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
+    new_recommendation_result_dict = als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
 
     data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     
@@ -95,9 +95,57 @@ def train_model2():
     new_raw_interactions = pd.DataFrame(interactionsResponse.json())
     new_raw_products = pd.DataFrame(productsResponse.json())
 
-    new_recommendation_result_dict = als.get_recommendation_result(new_raw_interactions, new_raw_products)
+    new_recommendation_result_dict = als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
 
     data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    
+    with lock:
+        global recommendation_result_dict
+        recommendation_result_dict = new_recommendation_result_dict
+
+    return jsonify({"message": "Model trained and recommendations updated"}), 200
+
+@app.route('/train_model3', methods=['POST'])
+@shared.require_api_key
+def train_model3():
+    interactions_file = request.files.get('new_raw_interactions')
+    products_file = request.files.get('new_raw_products')
+
+    if not interactions_file:
+        raise BusinessException("Interactions file is required")
+    if not products_file:
+        raise BusinessException("Products file is required")
+
+    new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
+    new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
+
+    new_recommendation_result_dict = als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
+
+    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    
+    with lock:
+        global recommendation_result_dict
+        recommendation_result_dict = new_recommendation_result_dict
+
+    return jsonify({"message": "Model trained and recommendations updated"}), 200
+
+@app.route('/train_model4', methods=['GET'])
+@shared.require_api_key
+def train_model4():
+    interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
+    productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
+
+    if not interactionsResponse:
+        raise BusinessException("Interactions file is required")
+    if not productsResponse:
+        raise BusinessException("Products file is required")
+
+    new_raw_interactions = pd.DataFrame(interactionsResponse.json())
+    new_raw_products = pd.DataFrame(productsResponse.json())
+
+    new_recommendation_result_dict = als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
+
+    # data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
     
     with lock:
         global recommendation_result_dict

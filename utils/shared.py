@@ -11,8 +11,7 @@ import requests
 import pandas as pd
 from collections import defaultdict
 import numpy as np
-from math import exp
-from math import log1p
+import math
 from exceptions.BusinessException import BusinessException
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
@@ -20,8 +19,6 @@ from utils.emailing import Emailing
 # from implicit.nearest_neighbours import bm25_weight
 
 logger = logging.getLogger(__name__)
-
-#region Data Manipulation
 
 PRODUCT_COL_NAME = 'productId'
 USER_COL_NAME = 'userId'
@@ -38,22 +35,26 @@ CATEGORIES_COL_NAME = 'categories'
 MANUFACTURER_COL_NAME = 'manufacturer'
 PRICE_COL_NAME = 'price'
 
-RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
-MULTIPLE_INTERACTIONS_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
 
-def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+INTERACTION_WEIGHTS = {
+    'Bought': 1.0,
+    'PutInCart': 0.5,
+    'PutInFavorites': 0.3,
+    'Clicked': 0.1
+}
+
+#region Homepage Recommender Data Manipulation
+
+RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+
+def get_homepage_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
     sb = StringBuilder()
     sb.append(f'Interactions count: {len(raw_interactions)}\n')
     sb.append(f'Raw products not null fields count:\n{raw_products.count()}\n')
 
-    raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
-    raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
-    raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
-
-    # Pre-cast to category for faster grouping and later extraction of codes
-    raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
-    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype('category')
+    adjust_raw_data(raw_interactions, raw_products)
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
@@ -93,37 +94,19 @@ def save_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.Dat
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
 
     sb.append(get_duration_message(now))
-    Emailing().send_email_and_log_info("Data cleaning", sb.__str__())
+    Emailing().send_email_and_log_info("Homepage recommender data cleaning", sb.__str__())
 
-    return clean_sparse_interactions, products, user_ids.astype(str)
-
-# Maybe im not happy with the product that i bought only one time, so for example 2 clicks and 1 put in favorites is stronger than that
-# When i buy product a lot of times other products couldn't ever be recommended, so the max for this bonus is 1
-# Slower rise and lower initial values
-# NOTE: Removed from the calculation, because if someone did buy, he surely did clicked on the product also, so i think this bonus doesn't have sense
-def get_multiple_interaction_bonus(grouped_interactions_count, grouped_interactions_rating):
-    return np.where(
-        grouped_interactions_count > 1,
-        1.0 - (1.0 / (1.0 + np.log1p((grouped_interactions_count - 1.0) * grouped_interactions_rating))),
-        0.0
-    )
+    return clean_sparse_interactions, user_ids.astype(str), products
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
 def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.DataFrame) -> pd.Series:
-    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format="%d.%m.%Y. %H:%M:%S")
+    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format=TIMESTAMP_FORMAT)
     diff_days = (now - timestamps) / np.timedelta64(1, 'D')
 
     if (diff_days < 0).any():
         raise ValueError("The timestamp is in the future. Please provide a valid past timestamp.")
-    
-    interaction_weights = {
-        'Bought': 1.0,
-        'PutInCart': 0.5,
-        'PutInFavorites': 0.3,
-        'Clicked': 0.1
-    }
 
-    weights = raw_interactions[INTERACTION_COL_NAME].map(interaction_weights)
+    weights = raw_interactions[INTERACTION_COL_NAME].map(INTERACTION_WEIGHTS)
 
     if weights.isnull().any():
         raise ValueError("Interaction value doesn't exist (valid: Bought, PutInCart, PutInFavorites, Clicked).")
@@ -150,7 +133,103 @@ def bm25_weight(X, K1=100, B=0.8):
 
 #endregion
 
-#region Helpers
+#region Cross Sell Recommender Data Manipulation
+
+PRODUCT_TO_RECOMMEND_COL_NAME = 'product_to_recommend_id'
+PRODUCT_FOR_RECOMMENDATION_COL_NAME = 'product_for_recommendation_id'
+INTERACTION_WEIGHT_COL_NAME = 'interaction_weight'
+
+def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
+    sb.append(f'Interactions count: {len(raw_interactions)}\n')
+    sb.append(f'Raw products not null fields count:\n{raw_products.count()}\n')
+
+    adjust_raw_data(raw_interactions, raw_products)
+
+    raw_interactions[TIMESTAMP_COL_NAME] = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format=TIMESTAMP_FORMAT)
+
+    product_product_dataframe = get_product_product_dataframe(raw_interactions)
+
+    if product_product_dataframe.empty:
+        raise BusinessException('There is no interactions between any of the products within the same user in one day.')
+
+    product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.codes
+    product_for_recommendation_idx = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.codes
+
+    clean_sparse_interactions = csr_matrix(
+        (product_product_dataframe[INTERACTION_WEIGHT_COL_NAME], (product_to_recommend_idx, product_for_recommendation_idx))
+    )
+
+    product_to_recommend_ids = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.categories
+    product_for_recommendation_ids = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.categories
+
+    raw_products_indexed = raw_products.set_index(ID_COL_NAME)
+
+    missing_ids = pd.Index(product_for_recommendation_ids).difference(raw_products_indexed.index)
+    if not missing_ids.empty:
+        sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
+
+    products = raw_products_indexed.reindex(product_for_recommendation_ids).reset_index(names=ID_COL_NAME)
+    default_values = {'stock': 0, 'status': 'Draft', 'visibility': 'Private', 'active': False }
+    products.fillna(value=default_values, inplace=True)
+
+    clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
+
+    sb.append(get_duration_message(now))
+    Emailing().send_email_and_log_info("Cross sell recommender data cleaning", sb.__str__())
+
+    return clean_sparse_interactions, product_to_recommend_ids, products
+
+def get_product_product_dataframe(raw_interactions: pd.DataFrame) -> pd.DataFrame:
+    # FT: Sorted by product_id
+    grouped_interactions = raw_interactions.groupby(
+        [USER_COL_NAME],
+        observed=True
+    )
+
+    product_product_dict = defaultdict(float)
+
+    for _, all_user_interactions in grouped_interactions:
+        timestamps = all_user_interactions[TIMESTAMP_COL_NAME]
+        for _, current_interaction in all_user_interactions.iterrows():
+            current_interaction_timestamp = current_interaction[TIMESTAMP_COL_NAME]
+            interactions_after_current = all_user_interactions.loc[
+                (
+                    (timestamps > current_interaction_timestamp) |
+                    (
+                        (timestamps == current_interaction_timestamp) & 
+                        (all_user_interactions[PRODUCT_COL_NAME] != current_interaction[PRODUCT_COL_NAME])
+                    )
+                )
+                & (timestamps < current_interaction_timestamp + np.timedelta64(1, 'D'))
+            ]
+            for _, interaction_after_current in interactions_after_current.iterrows():
+                weight = get_interaction_weight_for_two_products(current_interaction, interaction_after_current)
+                key = (current_interaction[PRODUCT_COL_NAME], interaction_after_current[PRODUCT_COL_NAME])
+                product_product_dict[key] += weight
+
+    # FT: pd.DataFrame.from_dict() doesn't work, can't detuple composite key
+    product_product_dataframe = pd.DataFrame(
+        [(k[0], k[1], v) for k, v in product_product_dict.items()],
+        columns=[PRODUCT_TO_RECOMMEND_COL_NAME, PRODUCT_FOR_RECOMMENDATION_COL_NAME, INTERACTION_WEIGHT_COL_NAME]
+    )
+
+    product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME] = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].astype('category')
+    product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME] = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].astype('category')
+
+    return product_product_dataframe
+
+def get_interaction_weight_for_two_products(interaction: pd.Series, interaction_after_current: pd.Series):
+    seconds_diff = (interaction_after_current[TIMESTAMP_COL_NAME] - interaction[TIMESTAMP_COL_NAME]).total_seconds()
+    weight = INTERACTION_WEIGHTS.get(interaction_after_current[INTERACTION_COL_NAME])
+    days_diff = seconds_diff / 86_400
+    decayed_weights = weight * math.exp(-(days_diff / RECENCY_DECAY_SCALE) ** 2) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+    return decayed_weights
+
+#endregion
+
+#region Shared
 
 def require_api_key(f):
     @wraps(f) # https://stackoverflow.com/questions/308999/what-does-functools-wraps-do
@@ -194,6 +273,15 @@ def handle_exception(ex: Exception):
     )
 
     return response
+
+def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+    raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
+    raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
+    raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
+
+    # Pre-cast to category for faster grouping and later extraction of codes
+    raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
+    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype('category')
 
 def get_duration_message(start_time: pd.Timestamp) -> str:
     return f'Duration: {(pd.Timestamp.now() - start_time).seconds} seconds'

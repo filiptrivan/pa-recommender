@@ -23,15 +23,17 @@ CATEGORIES_COL_NAME = 'categories'
 MANUFACTURER_COL_NAME = 'manufacturer'
 PRICE_COL_NAME = 'price'
 
+#region Homepage Recommender
+
 # FT: We can not pass partial interactions because of timestamp updates
-def get_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    sparse_user_product_matrix, products, user_ids = shared.save_interaction_values(raw_interactions, raw_products)
+def get_homepage_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+    sparse_user_product_matrix, user_ids, products = shared.get_homepage_interaction_values(raw_interactions, raw_products)
 
-    model = train_model(sparse_user_product_matrix)
+    model = homepage_train_model(sparse_user_product_matrix)
 
-    return get_recommendation_result_dict(model, sparse_user_product_matrix, user_ids, products)
+    return get_homepage_recommendation_result_dict(model, sparse_user_product_matrix, user_ids, products)
 
-def train_model(sparse_user_product):
+def homepage_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
@@ -40,11 +42,11 @@ def train_model(sparse_user_product):
     model.fit(sparse_user_product, show_progress=False)
 
     sb.append(shared.get_duration_message(now))
-    Emailing().send_email_and_log_info("Model training", sb.__str__())
+    Emailing().send_email_and_log_info("Homepage model training", sb.__str__())
 
     return model
 
-def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_matrix: csr_matrix, user_ids: pd.Index, products: pd.DataFrame) -> dict:
+def get_homepage_recommendation_result_dict(model: RecommenderBase, sparse_user_product_matrix: csr_matrix, user_ids: pd.Index, products: pd.DataFrame) -> dict:
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
@@ -81,17 +83,9 @@ def get_recommendation_result_dict(model: RecommenderBase, sparse_user_product_m
     sb.append(f"Top ten '{test_recommendations_email}' recommendations: {test_recommendations_for_display}\n")
 
     sb.append(shared.get_duration_message(now))
-    Emailing().send_email_and_log_info("Making recommendations", sb.__str__())
+    Emailing().send_email_and_log_info("Storing recommendations for homepage", sb.__str__())
 
     return recommendations_dict
-
-def get_product_indexes_to_filter(products: pd.DataFrame) -> pd.Index:
-    return products.loc[
-        (products[STOCK_COL_NAME] == 0) |
-        (products[STATUS_COL_NAME] != 'Published') |
-        (products[VISIBILITY_COL_NAME] != 'Public') |
-        (products[ACTIVE_COL_NAME] != True)
-    ].index
 
 def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, products: pd.DataFrame, product_indexes_to_filter: pd.Index) -> list[dict]:
     result: list[dict] = []
@@ -119,6 +113,74 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
 
     return result
 
+#endregion
+
+#region Cross Sell Recommender
+
+# FT: We can not pass partial interactions because of timestamp updates
+def get_cross_sell_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+    sparse_user_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
+
+    model = cross_sell_train_model(sparse_user_product_matrix)
+
+    return get_cross_sell_recommendation_result_dict(model, sparse_user_product_matrix, product_to_recommend_ids, products_for_recommendation)
+
+def cross_sell_train_model(sparse_user_product):
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
+
+    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    model.fit_callback = store_loss(sb)
+    model.fit(sparse_user_product, show_progress=False)
+
+    sb.append(shared.get_duration_message(now))
+    Emailing().send_email_and_log_info("Cross sell model training", sb.__str__())
+
+    return model
+
+def get_cross_sell_recommendation_result_dict(model: RecommenderBase, sparse_product_product_matrix: csr_matrix, product_to_recommend_ids: pd.Index, products_for_recommendation: pd.DataFrame) -> dict:
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
+
+    product_indexes_to_filter = get_product_indexes_to_filter(products_for_recommendation)
+    sb.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
+
+    recommendations_dict = defaultdict(list)
+
+    batch_size = 1000
+    to_generate = np.arange(len(product_to_recommend_ids))
+    
+    for startidx in range(0, len(to_generate), batch_size):
+        batch = to_generate[startidx : startidx + batch_size]
+        product_indexes, scores = model.recommend(batch, sparse_product_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
+        for i, product_to_recommend_index in enumerate(batch):
+            product_to_recommend_id = product_to_recommend_ids[product_to_recommend_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
+            products_for_cross_sell = []
+            for product_index, score in zip(product_indexes[i], scores[i]):
+                product = products_for_recommendation.iloc[product_index]
+                productDTO = init_productDTO(product)
+                if productDTO.Id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself for cross sell
+                    products_for_cross_sell.append(productDTO.__dict__)
+            recommendations_dict[product_to_recommend_id] = products_for_cross_sell
+    
+    test_product_for_cross_sell = Settings().TEST_PRODUCT_FOR_CROSS_SELL
+
+    if len(recommendations_dict[test_product_for_cross_sell]) == 0:
+        test_product_for_cross_sell = product_to_recommend_ids[0]
+    
+    test_recommendations_for_display = get_products_for_display(recommendations_dict[test_product_for_cross_sell])
+
+    sb.append(f"Top ten '{test_product_for_cross_sell}' recommendations: {test_recommendations_for_display}\n")
+
+    sb.append(shared.get_duration_message(now))
+    Emailing().send_email_and_log_info("Storing recommendations for cross sell", sb.__str__())
+
+    return recommendations_dict
+
+#endregion
+
+#region Shared
+
 def get_products_for_display(products: list[dict]) -> str:
     product_ids = [str(product['Id']) for product in products]
     return ', '.join(product_ids)
@@ -143,3 +205,13 @@ def store_loss(output: StringBuilder):
         output.append(f'Loss {loss:.5f}\n') 
 
     return inner
+
+def get_product_indexes_to_filter(products: pd.DataFrame) -> pd.Index:
+    return products.loc[
+        (products[STOCK_COL_NAME] == 0) |
+        (products[STATUS_COL_NAME] != 'Published') |
+        (products[VISIBILITY_COL_NAME] != 'Public') |
+        (products[ACTIVE_COL_NAME] != True)
+    ].index
+
+#endregion

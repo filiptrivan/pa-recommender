@@ -13,6 +13,7 @@ class Settings(metaclass=Singleton):
     RECOMMENDATIONS_FILE_NAME = None
     APPLICATIONINSIGHTS_CONNECTION_STRING = None
     TEST_RECOMMENDATIONS_EMAIL = None
+    TEST_PRODUCT_FOR_CROSS_SELL = None
 
     def __init__(self):
         load_dotenv()
@@ -26,3 +27,4 @@ class Settings(metaclass=Singleton):
         self.RECOMMENDATIONS_FILE_NAME = os.getenv('RECOMMENDATIONS_FILE_NAME')
         self.APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING')
         self.TEST_RECOMMENDATIONS_EMAIL = os.getenv('TEST_RECOMMENDATIONS_EMAIL')
+        self.TEST_PRODUCT_FOR_CROSS_SELL = os.getenv('TEST_PRODUCT_FOR_CROSS_SELL')
