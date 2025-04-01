@@ -138,6 +138,10 @@ def bm25_weight(X, K1=100, B=0.8):
 PRODUCT_TO_RECOMMEND_COL_NAME = 'product_to_recommend_id'
 PRODUCT_FOR_RECOMMENDATION_COL_NAME = 'product_for_recommendation_id'
 INTERACTION_WEIGHT_COL_NAME = 'interaction_weight'
+SESSION_HOURS = 12
+LEFT_SUFFIX = "_l"
+RIGHT_SUFFIX = "_r"
+
 
 def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
@@ -182,49 +186,56 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
     return clean_sparse_interactions, product_to_recommend_ids, products
 
 def get_product_product_dataframe(raw_interactions: pd.DataFrame) -> pd.DataFrame:
-    # FT: Sorted by product_id
-    grouped_interactions = raw_interactions.groupby(
-        [USER_COL_NAME],
-        observed=True
+    merged_interactions = raw_interactions.merge(
+        raw_interactions,
+        on=USER_COL_NAME,
+        suffixes=(LEFT_SUFFIX, RIGHT_SUFFIX)
     )
 
-    product_product_dict = defaultdict(float)
+    timestamp_left = f"{TIMESTAMP_COL_NAME}{LEFT_SUFFIX}"
+    timestamp_right = f"{TIMESTAMP_COL_NAME}{RIGHT_SUFFIX}"
+    product_left = f"{PRODUCT_COL_NAME}{LEFT_SUFFIX}"
+    product_right = f"{PRODUCT_COL_NAME}{RIGHT_SUFFIX}"
 
-    for _, all_user_interactions in grouped_interactions:
-        timestamps = all_user_interactions[TIMESTAMP_COL_NAME]
-        for _, current_interaction in all_user_interactions.iterrows():
-            current_interaction_timestamp = current_interaction[TIMESTAMP_COL_NAME]
-            interactions_after_current = all_user_interactions.loc[
-                (
-                    (timestamps > current_interaction_timestamp) |
-                    (
-                        (timestamps == current_interaction_timestamp) & 
-                        (all_user_interactions[PRODUCT_COL_NAME] != current_interaction[PRODUCT_COL_NAME])
-                    )
-                )
-                & (timestamps < current_interaction_timestamp + np.timedelta64(1, 'D'))
-            ]
-            for _, interaction_after_current in interactions_after_current.iterrows():
-                weight = get_interaction_weight_for_two_products(current_interaction, interaction_after_current)
-                key = (current_interaction[PRODUCT_COL_NAME], interaction_after_current[PRODUCT_COL_NAME])
-                product_product_dict[key] += weight
-
-    # FT: pd.DataFrame.from_dict() doesn't work, can't detuple composite key
-    product_product_dataframe = pd.DataFrame(
-        [(k[0], k[1], v) for k, v in product_product_dict.items()],
-        columns=[PRODUCT_TO_RECOMMEND_COL_NAME, PRODUCT_FOR_RECOMMENDATION_COL_NAME, INTERACTION_WEIGHT_COL_NAME]
+    # Only pairs where the right timestamp is:
+    # 1. Later than the left timestamp, OR same timestamp but different product.
+    # 2. Within a specified period of the left timestamp.
+    condition = (
+        (
+            (merged_interactions[timestamp_left] < merged_interactions[timestamp_right]) |
+            (
+                (merged_interactions[timestamp_left] == merged_interactions[timestamp_right]) & 
+                (merged_interactions[product_left] != merged_interactions[product_right])
+            )
+        )
+        & (merged_interactions[timestamp_right] < merged_interactions[timestamp_left] + np.timedelta64(SESSION_HOURS, 'h'))
     )
+
+    merged_interactions = merged_interactions[condition]
+
+    merged_interactions['weight'] = get_interaction_weights(merged_interactions)
+
+    product_product_dataframe = merged_interactions\
+        .groupby(
+            [f'{PRODUCT_COL_NAME}{LEFT_SUFFIX}', f'{PRODUCT_COL_NAME}{RIGHT_SUFFIX}']
+        )['weight']\
+        .sum()\
+        .reset_index()
+    
+    product_product_dataframe.columns = [PRODUCT_TO_RECOMMEND_COL_NAME, PRODUCT_FOR_RECOMMENDATION_COL_NAME, INTERACTION_WEIGHT_COL_NAME]
 
     product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME] = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].astype('category')
     product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME] = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].astype('category')
 
     return product_product_dataframe
 
-def get_interaction_weight_for_two_products(interaction: pd.Series, interaction_after_current: pd.Series):
-    seconds_diff = (interaction_after_current[TIMESTAMP_COL_NAME] - interaction[TIMESTAMP_COL_NAME]).total_seconds()
-    weight = INTERACTION_WEIGHTS.get(interaction_after_current[INTERACTION_COL_NAME])
-    days_diff = seconds_diff / 86_400
-    decayed_weights = weight * math.exp(-(days_diff / RECENCY_DECAY_SCALE) ** 2) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+def get_interaction_weights(merged_interactions: pd.DataFrame) -> np.ndarray:
+    seconds_diff = (merged_interactions[f"{TIMESTAMP_COL_NAME}{RIGHT_SUFFIX}"] - merged_interactions[f"{TIMESTAMP_COL_NAME}{LEFT_SUFFIX}"]) / np.timedelta64(1, 's')
+    days_diff = seconds_diff / 86400.0
+
+    weights = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_WEIGHTS).values
+
+    decayed_weights = weights * np.exp(-((days_diff / RECENCY_DECAY_SCALE) ** 2)) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
     return decayed_weights
 
 #endregion
