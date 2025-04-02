@@ -16,7 +16,7 @@ from exceptions.BusinessException import BusinessException
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
-# from implicit.nearest_neighbours import bm25_weight
+import redis
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,11 @@ INTERACTION_WEIGHTS = {
     'Clicked': 0.1
 }
 
+
 #region Homepage Recommender Data Manipulation
 
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+
 
 def get_homepage_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
@@ -158,21 +160,15 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
     if product_product_dataframe.empty:
         raise BusinessException(f'There is no interactions between any of the products within the same user in one {SESSION_HOURS} h session period.')
 
-    product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME]\
-        .cat.remove_unused_categories()\
-        .cat.codes
+    product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.codes
     product_for_recommendation_idx = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.codes
 
     clean_sparse_interactions = csr_matrix(
         (product_product_dataframe[INTERACTION_WEIGHT_COL_NAME], (product_to_recommend_idx, product_for_recommendation_idx))
     )
 
-    product_to_recommend_ids = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME]\
-        .cat.remove_unused_categories()\
-        .cat.categories
-    product_for_recommendation_ids = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME]\
-        .cat.remove_unused_categories()\
-        .cat.categories
+    product_to_recommend_ids = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.categories
+    product_for_recommendation_ids = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.categories
 
     raw_products_indexed = raw_products.set_index(ID_COL_NAME)
 
@@ -231,8 +227,9 @@ def get_product_product_dataframe(raw_interactions: pd.DataFrame) -> pd.DataFram
     
     product_product_dataframe.columns = [PRODUCT_TO_RECOMMEND_COL_NAME, PRODUCT_FOR_RECOMMENDATION_COL_NAME, INTERACTION_WEIGHT_COL_NAME]
 
-    product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME] = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].astype('category')
-    product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME] = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].astype('category')
+    # NOTE FT: We need to remove_unused_categories because we filtered some in previous steps
+    product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME] = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.remove_unused_categories()
+    product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME] = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.remove_unused_categories()
 
     return product_product_dataframe
 

@@ -6,12 +6,14 @@ from implicit.recommender_base import RecommenderBase
 import numpy as np
 import implicit
 from scipy.sparse import csr_matrix
+import json
 
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from DTO.ProductDTO import ProductDTO
 from utils import shared
 from utils.emailing import Emailing
+import redis
 
 ID_COL_NAME = 'id'
 STOCK_COL_NAME = 'stock'
@@ -25,6 +27,13 @@ PRICE_COL_NAME = 'price'
 
 #region Homepage Recommender
 
+HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
+    host='redis-10822.c300.eu-central-1-1.ec2.redns.redis-cloud.com:10822',
+    port=6379,
+    username=Settings().REDIS_USERNAME,
+    password=Settings().CROSS_SELL_RECOMMENDER_REDIS_PASS
+)
+
 # FT: We can not pass partial interactions because of timestamp updates
 def get_homepage_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     sparse_user_product_matrix, user_ids, products = shared.get_homepage_interaction_values(raw_interactions, raw_products)
@@ -37,7 +46,8 @@ def homepage_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -54,24 +64,32 @@ def get_homepage_recommendation_result_dict(model: RecommenderBase, sparse_user_
     sb.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
     recommendations_dict = defaultdict(list)
-    
-    recommendations_dict['top_ten_overall_recommendations'] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
-    sb.append(f"Top ten overall recommendations: {get_products_for_display(recommendations_dict['top_ten_overall_recommendations'])}\n")
 
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
     
-    for startidx in range(0, len(to_generate), batch_size):
-        batch = to_generate[startidx : startidx + batch_size]
-        product_indexes, scores = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
-        for i, user_index in enumerate(batch):
-            user_id = user_ids[user_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
-            products_for_recommendation = []
-            for product_index, score in zip(product_indexes[i], scores[i]):
-                product = products.iloc[product_index]
-                productDTO = init_productDTO(product)
-                products_for_recommendation.append(productDTO.__dict__)
-            recommendations_dict[user_id] = products_for_recommendation
+    redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
+
+    try:
+        recommendations_dict['top_ten_overall_recommendations'] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
+        sb.append(f"Top ten overall recommendations: {get_products_for_display(recommendations_dict['top_ten_overall_recommendations'])}\n")
+
+        for startidx in range(0, len(to_generate), batch_size):
+            batch = to_generate[startidx : startidx + batch_size]
+            product_indexes, scores = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
+            for i, user_index in enumerate(batch):
+                user_id = user_ids[user_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
+                products_for_recommendation = []
+                for product_index, score in zip(product_indexes[i], scores[i]):
+                    product = products.iloc[product_index]
+                    productDTO = init_productDTO(product)
+                    products_for_recommendation.append(productDTO.__dict__)
+                recommendations_dict[user_id] = products_for_recommendation
+                redis_pipeline.set(user_id, json.dumps(products_for_recommendation))
+        redis_pipeline.execute()
+    except Exception as ex:
+        redis_pipeline.reset()
+        raise ex
     
     test_recommendations_email = Settings().TEST_RECOMMENDATIONS_EMAIL
 
@@ -117,6 +135,15 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
 
 #region Cross Sell Recommender
 
+CROSS_SELL_RECOMMENDER_REDIS = redis.Redis(
+    host='redis-10822.c300.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=10822,
+    decode_responses=True,
+    username=Settings().REDIS_USERNAME,
+    password=Settings().CROSS_SELL_RECOMMENDER_REDIS_PASS
+)
+
+
 # FT: We can not pass partial interactions because of timestamp updates
 def get_cross_sell_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
@@ -150,18 +177,26 @@ def get_cross_sell_recommendation_result_dict(model: RecommenderBase, sparse_pro
     batch_size = 1000
     to_generate = np.arange(len(product_to_recommend_ids))
     
-    for startidx in range(0, len(to_generate), batch_size):
-        batch = to_generate[startidx : startidx + batch_size]
-        product_indexes, scores = model.recommend(batch, sparse_product_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
-        for i, product_to_recommend_index in enumerate(batch):
-            product_to_recommend_id = product_to_recommend_ids[product_to_recommend_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
-            products_for_cross_sell = []
-            for product_index, score in zip(product_indexes[i], scores[i]):
-                product = products_for_recommendation.iloc[product_index]
-                productDTO = init_productDTO(product)
-                if productDTO.Id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself for cross sell
-                    products_for_cross_sell.append(productDTO.__dict__)
-            recommendations_dict[product_to_recommend_id] = products_for_cross_sell
+    redis_pipeline = CROSS_SELL_RECOMMENDER_REDIS.pipeline()
+
+    try:
+        for startidx in range(0, len(to_generate), batch_size):
+            batch = to_generate[startidx : startidx + batch_size]
+            product_indexes, scores = model.recommend(batch, sparse_product_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
+            for i, product_to_recommend_index in enumerate(batch):
+                product_to_recommend_id = product_to_recommend_ids[product_to_recommend_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
+                products_for_cross_sell = []
+                for product_index, score in zip(product_indexes[i], scores[i]):
+                    product = products_for_recommendation.iloc[product_index]
+                    productDTO = init_productDTO(product)
+                    if productDTO.Id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself for cross sell
+                        products_for_cross_sell.append(productDTO.__dict__)
+                recommendations_dict[product_to_recommend_id] = products_for_cross_sell
+                redis_pipeline.set(product_to_recommend_id, json.dumps(products_for_cross_sell))
+        redis_pipeline.execute()
+    except Exception as ex:
+        redis_pipeline.reset()
+        raise ex
     
     test_product_for_cross_sell = Settings().TEST_PRODUCT_FOR_CROSS_SELL
 

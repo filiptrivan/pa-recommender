@@ -34,10 +34,6 @@ limiter = Limiter(
     default_limits=["200 per hour"]
 )
 
-lock = threading.Lock()
-recommendation_result_dict = data.load_dict_from_azure(Settings().RECOMMENDATIONS_FILE_NAME)
-# pprint.pprint(recommendation_result_dict)
-
 @app.errorhandler(Exception)
 def handle_exception(ex):
     return shared.handle_exception(ex)
@@ -46,16 +42,15 @@ def handle_exception(ex):
 def hello_world():
     return "Hello, World!"
 
-@app.route('/get_recommendations', methods=['GET'])
+@app.route('/get_homepage_recommendations', methods=['GET'])
 @shared.require_api_key
-def get_recommendations():
+def get_homepage_recommendations():
     user_id = request.args.get('user_id')
 
-    with lock:
-        if user_id is None or recommendation_result_dict.get(user_id) is None:
-            return recommendation_result_dict['top_ten_overall_recommendations']
+    if user_id is None or als.HOMEPAGE_RECOMMENDER_REDIS.get(user_id) is None:
+        return als.HOMEPAGE_RECOMMENDER_REDIS.get('top_ten_overall_recommendations')
 
-        return recommendation_result_dict[user_id]
+    return als.HOMEPAGE_RECOMMENDER_REDIS.get(user_id)
 
 @app.route('/train_model', methods=['POST'])
 @shared.require_api_key
@@ -71,14 +66,8 @@ def train_model():
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
-    new_recommendation_result_dict = als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
-
-    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
     
-    with lock:
-        global recommendation_result_dict
-        recommendation_result_dict = new_recommendation_result_dict
-
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
 @app.route('/train_model2', methods=['GET'])
@@ -95,13 +84,7 @@ def train_model2():
     new_raw_interactions = pd.DataFrame(interactionsResponse.json())
     new_raw_products = pd.DataFrame(productsResponse.json())
 
-    new_recommendation_result_dict = als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
-
-    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
-    
-    with lock:
-        global recommendation_result_dict
-        recommendation_result_dict = new_recommendation_result_dict
+    als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
@@ -119,13 +102,7 @@ def train_model3():
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
-    new_recommendation_result_dict = als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
-
-    data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
-    
-    with lock:
-        global recommendation_result_dict
-        recommendation_result_dict = new_recommendation_result_dict
+    als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
@@ -143,14 +120,8 @@ def train_model4():
     new_raw_interactions = pd.DataFrame(interactionsResponse.json())
     new_raw_products = pd.DataFrame(productsResponse.json())
 
-    new_recommendation_result_dict = als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
-
-    # data.save_dictionary_to_azure(Settings().RECOMMENDATIONS_FILE_NAME, new_recommendation_result_dict)
+    als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
     
-    with lock:
-        global recommendation_result_dict
-        recommendation_result_dict = new_recommendation_result_dict
-
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
 if __name__ == '__main__':
