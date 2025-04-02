@@ -119,11 +119,11 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
 
 # FT: We can not pass partial interactions because of timestamp updates
 def get_cross_sell_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    sparse_user_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
+    sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
 
-    model = cross_sell_train_model(sparse_user_product_matrix)
+    model = cross_sell_train_model(sparse_product_product_matrix)
 
-    return get_cross_sell_recommendation_result_dict(model, sparse_user_product_matrix, product_to_recommend_ids, products_for_recommendation)
+    return get_cross_sell_recommendation_result_dict(model, sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation)
 
 def cross_sell_train_model(sparse_user_product):
     now = pd.Timestamp.now()

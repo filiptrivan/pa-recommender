@@ -61,7 +61,7 @@ def get_homepage_interaction_values(raw_interactions: pd.DataFrame, raw_products
     # FT: Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
         [PRODUCT_COL_NAME, USER_COL_NAME],
-        observed=True
+        observed=True # FT: Mandatory, if we don't use this, we will get a lot of data from the moment when we casted column to categorical
     ).agg(
         total_rating=('individual_rating', 'sum'),
         interaction_count=('individual_rating', 'count')
@@ -156,17 +156,23 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
     product_product_dataframe = get_product_product_dataframe(raw_interactions)
 
     if product_product_dataframe.empty:
-        raise BusinessException('There is no interactions between any of the products within the same user in one day.')
+        raise BusinessException(f'There is no interactions between any of the products within the same user in one {SESSION_HOURS} h session period.')
 
-    product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.codes
+    product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME]\
+        .cat.remove_unused_categories()\
+        .cat.codes
     product_for_recommendation_idx = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.codes
 
     clean_sparse_interactions = csr_matrix(
         (product_product_dataframe[INTERACTION_WEIGHT_COL_NAME], (product_to_recommend_idx, product_for_recommendation_idx))
     )
 
-    product_to_recommend_ids = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.categories
-    product_for_recommendation_ids = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.categories
+    product_to_recommend_ids = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME]\
+        .cat.remove_unused_categories()\
+        .cat.categories
+    product_for_recommendation_ids = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME]\
+        .cat.remove_unused_categories()\
+        .cat.categories
 
     raw_products_indexed = raw_products.set_index(ID_COL_NAME)
 
@@ -217,7 +223,8 @@ def get_product_product_dataframe(raw_interactions: pd.DataFrame) -> pd.DataFram
 
     product_product_dataframe = merged_interactions\
         .groupby(
-            [f'{PRODUCT_COL_NAME}{LEFT_SUFFIX}', f'{PRODUCT_COL_NAME}{RIGHT_SUFFIX}']
+            [f'{PRODUCT_COL_NAME}{LEFT_SUFFIX}', f'{PRODUCT_COL_NAME}{RIGHT_SUFFIX}'],
+            observed=True # FT: Mandatory, if we don't use this, we will get a lot of data from the moment when we casted column to categorical
         )['weight']\
         .sum()\
         .reset_index()
