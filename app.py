@@ -66,7 +66,7 @@ def train_model():
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
-    als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
+    als.process_homepage_and_similar_products_recommendations(new_raw_interactions, new_raw_products)
     
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
@@ -84,7 +84,7 @@ def train_model2():
     new_raw_interactions = pd.DataFrame(interactionsResponse.json())
     new_raw_products = pd.DataFrame(productsResponse.json())
 
-    als.get_homepage_recommendation_result(new_raw_interactions, new_raw_products)
+    als.process_homepage_and_similar_products_recommendations(new_raw_interactions, new_raw_products)
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 

@@ -45,12 +45,11 @@ INTERACTION_WEIGHTS = {
 }
 
 
-#region Homepage Recommender Data Manipulation
+#region Homepage And Similar Products Recommenders Data Manipulation
 
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-
-def get_homepage_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
     sb = StringBuilder()
     sb.append(f'Interactions count: {len(raw_interactions)}\n')
@@ -96,7 +95,7 @@ def get_homepage_interaction_values(raw_interactions: pd.DataFrame, raw_products
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
 
     sb.append(get_duration_message(now))
-    Emailing().send_email_and_log_info("Homepage recommender data cleaning", sb.__str__())
+    Emailing().send_email_and_log_info("Homepage and similar products recommender data cleaning", sb.__str__())
 
     return clean_sparse_interactions, user_ids.astype(str), products
 
