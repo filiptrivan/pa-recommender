@@ -122,7 +122,7 @@ def save_homepage_recommendations(
                     productDTO = init_productDTO(product)
                     products_for_recommendation.append(productDTO.__dict__)
                 recommendations_dict[user_id] = products_for_recommendation
-                redis_pipeline.set(user_id, json.dumps(products_for_recommendation))
+                redis_pipeline.set(name=user_id, ex=604800, value=json.dumps(products_for_recommendation)) # ex=7 days
         redis_pipeline.execute()
     except Exception as ex:
         redis_pipeline.reset()
@@ -194,7 +194,7 @@ def save_similar_products_recommendations(
                     if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
                         similar_products.append(product_id)
                 recommendations_dict[product_to_recommend_id] = similar_products
-                redis_pipeline.set(product_to_recommend_id, json.dumps(similar_products))
+                redis_pipeline.set(name=product_to_recommend_id, ex=604800, value=json.dumps(similar_products)) # ex=7 days
         redis_pipeline.execute()
     except Exception as ex:
         redis_pipeline.reset()
@@ -270,7 +270,8 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
                     if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
                         products_for_cross_sell.append(product_id)
                 recommendations_dict[product_to_recommend_id] = products_for_cross_sell
-                redis_pipeline.set(product_to_recommend_id, json.dumps(products_for_cross_sell))
+                # Persistant, because it's product to product interactions, for this we need the best data possible, we shouldn't retrain it in short period
+                redis_pipeline.set(name=product_to_recommend_id, value=json.dumps(products_for_cross_sell))
         redis_pipeline.execute()
     except Exception as ex:
         redis_pipeline.reset()
