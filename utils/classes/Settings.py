@@ -18,6 +18,8 @@ class Settings(metaclass=Singleton):
     HOMEPAGE_RECOMMENDER_REDIS_PASS = None
     SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS = None
     CROSS_SELL_RECOMMENDER_REDIS_PASS = None
+    API_URL = None
+    BEARER_TOKEN = None
 
     def __init__(self):
         load_dotenv()
@@ -36,3 +38,5 @@ class Settings(metaclass=Singleton):
         self.HOMEPAGE_RECOMMENDER_REDIS_PASS = os.getenv('HOMEPAGE_RECOMMENDER_REDIS_PASS')
         self.SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS = os.getenv('SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS')
         self.CROSS_SELL_RECOMMENDER_REDIS_PASS = os.getenv('CROSS_SELL_RECOMMENDER_REDIS_PASS')
+        self.API_URL = os.getenv('API_URL')
+        self.BEARER_TOKEN = os.getenv('BEARER_TOKEN')

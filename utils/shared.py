@@ -16,6 +16,7 @@ from exceptions.BusinessException import BusinessException
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
+from datetime import datetime, timedelta
 import redis
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,10 @@ INTERACTION_WEIGHTS = {
     'Clicked': 0.1
 }
 
+EXTERNAL_API_HEADERS = {
+    "Authorization": f"Bearer {Settings().BEARER_TOKEN}"
+}
+EXTERNAL_API_NAMESPACE='prodavnicaalata'
 
 #region Homepage And Similar Products Recommenders Data Manipulation
 
@@ -299,5 +304,77 @@ def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
 
 def get_duration_message(start_time: pd.Timestamp) -> str:
     return f'Duration: {(pd.Timestamp.now() - start_time).seconds} seconds'
+
+def get_interactions_from_external_api():
+    base_url = f'{Settings().API_URL}/GET/activities/events/'
+    limit = 10000
+    headers = EXTERNAL_API_HEADERS
+    batch_days = 10
+    events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
+
+    now = datetime.utcnow()
+    one_year_ago = now - timedelta(days=20)
+
+    all_activities = []  # will hold dicts from each batch
+
+    for event in events:
+        current_from = one_year_ago
+        while current_from < now:
+            current_to = min(current_from + timedelta(days=batch_days), now)
+
+            from_ts = int(current_from.timestamp())
+            to_ts = int(current_to.timestamp())
+
+            url = (
+                f"{base_url}"
+                f"?namespace={EXTERNAL_API_NAMESPACE}"
+                f"&date_filter_from={from_ts}"
+                f"&date_filter_to={to_ts}"
+                f"&order_by=id&order_by_type=desc"
+                f"&event={event}"
+                f"&limit={limit}"
+            )
+
+            print(f"Fetching raw data from {current_from} to {current_to}")
+            response = requests.get(url, verify=True, headers=headers)
+
+            if response.status_code == 200:
+                json_payload = response.json()
+                data_section = json_payload.get("data", {})
+                if data_section is None:
+                    batch_activities = []
+                else:
+                    batch_activities = data_section.get("activities", [])
+                all_activities.extend(batch_activities)
+            else:
+                print(f"Request failed: {response.status_code} for {current_from} to {current_to}")
+
+            current_from = current_to
+
+    if not all_activities:
+        raise BusinessException("Interactions file is required")
+
+    new_raw_interactions = pd.DataFrame(all_activities)
+
+    filtered_interactions = (
+        new_raw_interactions[['action', 'user_id', 'info', 'created']]
+        .dropna(subset=['user_id'])
+    )
+
+    mask = filtered_interactions['action'] == 'event:add_to_cart'
+
+    info_list = [
+        x if isinstance(x, dict) else {}
+        for x in filtered_interactions.loc[mask, 'info'].tolist()
+    ]
+
+    temp = pd.DataFrame(info_list, index=filtered_interactions.loc[mask].index)
+
+    filtered_interactions.loc[mask, 'product_id'] = temp['id']
+
+    return filtered_interactions
+
+def get_products_from_external_api():
+    productsResponse = requests.get(f'{Settings().API_URL}/GET/products/?namespace=prodavnicaalata&hide_categories=true&hide_seo=true&hide_tags=true&hide_manufacturer=true&hide_items=true&hide_attributes=true&hide_locations=true&hide_variations=true', verify=False, headers=EXTERNAL_API_HEADERS)
 
 #endregion

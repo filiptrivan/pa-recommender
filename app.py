@@ -52,9 +52,9 @@ def get_homepage_recommendations():
 
     return als.HOMEPAGE_RECOMMENDER_REDIS.get(user_id)
 
-@app.route('/train_model', methods=['POST'])
+@app.route('/train_homepage_model', methods=['POST'])
 @shared.require_api_key
-def train_model():
+def train_homepage_model():
     interactions_file = request.files.get('new_raw_interactions')
     products_file = request.files.get('new_raw_products')
 
@@ -70,27 +70,32 @@ def train_model():
     
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-@app.route('/train_model2', methods=['GET'])
+@app.route('/train_homepage_model_by_http_request', methods=['GET'])
 @shared.require_api_key
-def train_model2():
-    interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
-    productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
+def train_homepage_model_by_http_request():
+    # interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
+    # productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
+    new_raw_interactions = shared.get_interactions_from_external_api()
+    # productsResponse = shared.get_products_from_external_api()
 
-    if not interactionsResponse:
-        raise BusinessException("Interactions file is required")
-    if not productsResponse:
-        raise BusinessException("Products file is required")
+    # if not new_raw_interactions:
+    #     raise BusinessException("Interactions file is required")
+    # if not productsResponse:
+    #     raise BusinessException("Products file is required")
 
-    new_raw_interactions = pd.DataFrame(interactionsResponse.json())
-    new_raw_products = pd.DataFrame(productsResponse.json())
+    # new_raw_interactions = pd.DataFrame(interactionsResponse.json().get("data", {}).get("activities", []))
+    # new_raw_products = pd.DataFrame(productsResponse.json().get("data", {}).get("products", []))
+
+    print(new_raw_interactions.head())
+    print(new_raw_products.head())
 
     als.process_homepage_and_similar_products_recommendations(new_raw_interactions, new_raw_products)
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-@app.route('/train_model3', methods=['POST'])
+@app.route('/train_cross_sell_model', methods=['POST'])
 @shared.require_api_key
-def train_model3():
+def train_cross_sell_model():
     interactions_file = request.files.get('new_raw_interactions')
     products_file = request.files.get('new_raw_products')
 
@@ -106,9 +111,9 @@ def train_model3():
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-@app.route('/train_model4', methods=['GET'])
+@app.route('/train_cross_sell_model_by_http_request', methods=['GET'])
 @shared.require_api_key
-def train_model4():
+def train_cross_sell_model_by_http_request():
     interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
     productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
 

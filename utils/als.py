@@ -35,16 +35,16 @@ PRICE_COL_NAME = 'price'
 #region Homepage And Similar Products Recommender
 
 HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-10822.c300.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=10822,
+    host='redis-13102.c250.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=13102,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().HOMEPAGE_RECOMMENDER_REDIS_PASS
 )
 
 SIMILAR_PRODUCTS_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-10822.c300.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=10822,
+    host='redis-13102.c250.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=13102,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS
