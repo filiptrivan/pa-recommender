@@ -86,7 +86,7 @@ def train_homepage_model_by_http_request():
     # new_raw_interactions = pd.DataFrame(interactionsResponse.json().get("data", {}).get("activities", []))
     # new_raw_products = pd.DataFrame(productsResponse.json().get("data", {}).get("products", []))
 
-    print(new_raw_interactions.head())
+    print(new_raw_interactions[new_raw_interactions['action'] == 'event:purchase'].head())
     print(new_raw_products.head())
 
     als.process_homepage_and_similar_products_recommendations(new_raw_interactions, new_raw_products)

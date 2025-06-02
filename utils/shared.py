@@ -307,7 +307,7 @@ def get_duration_message(start_time: pd.Timestamp) -> str:
 
 def get_interactions_from_external_api():
     base_url = f'{Settings().API_URL}/GET/activities/events/'
-    limit = 10000
+    limit = 20000
     headers = EXTERNAL_API_HEADERS
     batch_days = 10
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
@@ -359,18 +359,39 @@ def get_interactions_from_external_api():
     filtered_interactions = (
         new_raw_interactions[['action', 'user_id', 'info', 'created']]
         .dropna(subset=['user_id'])
+        .dropna(subset=['info'])
     )
 
-    mask = filtered_interactions['action'] == 'event:add_to_cart'
+    #region Purchase
 
-    info_list = [
-        x if isinstance(x, dict) else {}
-        for x in filtered_interactions.loc[mask, 'info'].tolist()
-    ]
+    mask_purchase = filtered_interactions['action'] == 'event:purchase'
+    purchase_df = filtered_interactions.loc[mask_purchase].copy()
+    temp_info_purchase_df = pd.DataFrame(purchase_df['info'].tolist(), index=purchase_df.index)
 
-    temp = pd.DataFrame(info_list, index=filtered_interactions.loc[mask].index)
+    purchase_df['content_ids'] = temp_info_purchase_df.get('content_ids', pd.Series("", index=purchase_df.index)).astype(str)
 
-    filtered_interactions.loc[mask, 'product_id'] = temp['id']
+    purchase_df = purchase_df[purchase_df['content_ids'] != '']
+
+    purchase_df['product_id'] = purchase_df['content_ids'].str.strip(',').str.split(',')
+
+    purchase_exploded = purchase_df.explode('product_id').reset_index(drop=True)
+    purchase_exploded = purchase_exploded.drop(columns=['content_ids'])
+
+    others = filtered_interactions.loc[~mask_purchase].copy().reset_index(drop=True)
+    filtered_interactions = pd.concat([others, purchase_exploded], ignore_index=True)
+
+    #endregion
+
+    #region Add To Cart
+
+    mask_addtocart = filtered_interactions['action'] == 'event:add_to_cart'
+    info_addtocart = filtered_interactions.loc[mask_addtocart, 'info'].tolist()
+    temp_info_addtocart_df = pd.DataFrame(info_addtocart, index=filtered_interactions.loc[mask_addtocart].index)
+    filtered_interactions.loc[mask_addtocart, 'product_id'] = temp_info_addtocart_df['id']
+
+    #endregion
+
+    filtered_interactions = filtered_interactions.drop(columns=['info'])
 
     return filtered_interactions
 
