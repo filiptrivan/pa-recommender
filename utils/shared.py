@@ -21,10 +21,10 @@ import redis
 
 logger = logging.getLogger(__name__)
 
-PRODUCT_COL_NAME = 'productId'
-USER_COL_NAME = 'userId'
-INTERACTION_COL_NAME = 'interaction'
-TIMESTAMP_COL_NAME = 'timestamp'
+PRODUCT_COL_NAME = 'product_id'
+USER_COL_NAME = 'user_id'
+INTERACTION_COL_NAME = 'action'
+TIMESTAMP_COL_NAME = 'created'
 
 ID_COL_NAME = 'id'
 STOCK_COL_NAME = 'stock'
@@ -308,7 +308,6 @@ def get_duration_message(start_time: pd.Timestamp) -> str:
 def get_interactions_from_external_api():
     base_url = f'{Settings().API_URL}/GET/activities/events/'
     limit = 20000
-    headers = EXTERNAL_API_HEADERS
     batch_days = 10
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
 
@@ -336,7 +335,7 @@ def get_interactions_from_external_api():
             )
 
             print(f"Fetching raw data from {current_from} to {current_to}")
-            response = requests.get(url, verify=True, headers=headers)
+            response = requests.get(url, verify=True, headers=EXTERNAL_API_HEADERS)
 
             if response.status_code == 200:
                 json_payload = response.json()
@@ -362,25 +361,9 @@ def get_interactions_from_external_api():
         .dropna(subset=['info'])
     )
 
-    #region Purchase
-
-    mask_purchase = filtered_interactions['action'] == 'event:purchase'
-    purchase_df = filtered_interactions.loc[mask_purchase].copy()
-    temp_info_purchase_df = pd.DataFrame(purchase_df['info'].tolist(), index=purchase_df.index)
-
-    purchase_df['content_ids'] = temp_info_purchase_df.get('content_ids', pd.Series("", index=purchase_df.index)).astype(str)
-
-    purchase_df = purchase_df[purchase_df['content_ids'] != '']
-
-    purchase_df['product_id'] = purchase_df['content_ids'].str.strip(',').str.split(',')
-
-    purchase_exploded = purchase_df.explode('product_id').reset_index(drop=True)
-    purchase_exploded = purchase_exploded.drop(columns=['content_ids'])
-
-    others = filtered_interactions.loc[~mask_purchase].copy().reset_index(drop=True)
-    filtered_interactions = pd.concat([others, purchase_exploded], ignore_index=True)
-
-    #endregion
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:initiate_checkout')
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:purchase')
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:add_to_wishlist')
 
     #region Add To Cart
 
@@ -395,7 +378,30 @@ def get_interactions_from_external_api():
 
     return filtered_interactions
 
+def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: str):
+    mask = interactions['action'] == action_name
+    df = interactions.loc[mask].copy()
+    temp_info_df = pd.DataFrame(df['info'].tolist(), index=df.index)
+
+    df['content_ids'] = temp_info_df.get('content_ids', pd.Series("", index=df.index)).astype(str)
+
+    df = df[df['content_ids'] != '']
+
+    df['product_id'] = df['content_ids'].str.strip(',').str.split(',')
+
+    exploded = df.explode('product_id').reset_index(drop=True)
+    exploded = exploded.drop(columns=['content_ids'])
+
+    others = interactions.loc[~mask].copy().reset_index(drop=True)
+    interactions = pd.concat([others, exploded], ignore_index=True)
+    return interactions
+
 def get_products_from_external_api():
+    base_url = f'{Settings().API_URL}/GET/products/'
+    limit = 3000
+    headers = EXTERNAL_API_HEADERS
+    manufacturers = [2, 3, 4] # TODO: Add manufacturers endpoint and put all ids into array, so we can batch products
+
     productsResponse = requests.get(f'{Settings().API_URL}/GET/products/?namespace=prodavnicaalata&hide_categories=true&hide_seo=true&hide_tags=true&hide_manufacturer=true&hide_items=true&hide_attributes=true&hide_locations=true&hide_variations=true', verify=False, headers=EXTERNAL_API_HEADERS)
 
 #endregion

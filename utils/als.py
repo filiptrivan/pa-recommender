@@ -28,9 +28,6 @@ STATUS_COL_NAME = 'status'
 VISIBILITY_COL_NAME = 'visibility'
 ACTIVE_COL_NAME = 'active'
 TITLE_COL_NAME = 'title'
-CATEGORIES_COL_NAME = 'categories'
-MANUFACTURER_COL_NAME = 'manufacturer'
-PRICE_COL_NAME = 'price'
 
 #region Homepage And Similar Products Recommender
 
@@ -307,10 +304,7 @@ def init_productDTO(row: pd.Series):
         Status=row[STATUS_COL_NAME], 
         Visibility=row[VISIBILITY_COL_NAME], 
         Active=row[ACTIVE_COL_NAME],
-        Title=row[TITLE_COL_NAME],
-        Categories=row[CATEGORIES_COL_NAME],
-        Manufacturer=row[MANUFACTURER_COL_NAME],
-        Price=row[PRICE_COL_NAME],
+        Title=row[TITLE_COL_NAME]
     )
 
 # https://github.com/benfred/implicit/issues/281
