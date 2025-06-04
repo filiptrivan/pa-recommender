@@ -318,7 +318,7 @@ def get_interactions_from_external_api():
 
     for event in events:
         current_from = one_year_ago
-        while current_from < now:
+        while current_from < now: # TODO: I want till this moment
             current_to = min(current_from + timedelta(days=batch_days), now)
 
             from_ts = int(current_from.timestamp())
@@ -335,7 +335,7 @@ def get_interactions_from_external_api():
             )
 
             print(f"Fetching raw data from {current_from} to {current_to}")
-            response = requests.get(url, verify=True, headers=EXTERNAL_API_HEADERS)
+            response = requests.get(url, headers=EXTERNAL_API_HEADERS)
 
             if response.status_code == 200:
                 json_payload = response.json()
@@ -346,12 +346,12 @@ def get_interactions_from_external_api():
                     batch_activities = data_section.get("activities", [])
                 all_activities.extend(batch_activities)
             else:
-                print(f"Request failed: {response.status_code} for {current_from} to {current_to}")
+                print(f"Request failed: {response.status_code}.")
 
             current_from = current_to
 
     if not all_activities:
-        raise BusinessException("Interactions file is required")
+        raise BusinessException("Interactions are required.")
 
     new_raw_interactions = pd.DataFrame(all_activities)
 
@@ -397,11 +397,56 @@ def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: 
     return interactions
 
 def get_products_from_external_api():
-    base_url = f'{Settings().API_URL}/GET/products/'
     limit = 3000
-    headers = EXTERNAL_API_HEADERS
-    manufacturers = [2, 3, 4] # TODO: Add manufacturers endpoint and put all ids into array, so we can batch products
+    base_url = (
+        f"{Settings().API_URL}/GET/products/"
+        f"?namespace={EXTERNAL_API_NAMESPACE}"
+        f"&limit={limit}"
+        "&hide_categories=true"
+        "&hide_seo=true"
+        "&hide_tags=true"
+        "&hide_manufacturer=true"
+        "&hide_items=true"
+        "&hide_attributes=true"
+        "&hide_locations=true&hide_variations=true"
+    )
+    manufacturers_url = (
+        f"{Settings().API_URL}/GET/manufacturers/"
+        f"?namespace={EXTERNAL_API_NAMESPACE}"
+        f"&limit={500}" # There are only around 300 manufacturers
+    )
+    manufacturers_raw = requests.get(manufacturers_url, headers=EXTERNAL_API_HEADERS)
+    manufacturer_json = manufacturers_raw.json().get("data", {}).get("manufacturers", [])
+    manufacturers_df = pd.DataFrame(manufacturer_json)
+    print(manufacturers_df["id"].head())
+    manufacturer_ids = [2, 3, 4] # TODO: Add manufacturers endpoint and put all ids into array, so we can batch products
 
-    productsResponse = requests.get(f'{Settings().API_URL}/GET/products/?namespace=prodavnicaalata&hide_categories=true&hide_seo=true&hide_tags=true&hide_manufacturer=true&hide_items=true&hide_attributes=true&hide_locations=true&hide_variations=true', verify=False, headers=EXTERNAL_API_HEADERS)
+    all_products = []  # will hold dicts from each batch
+
+    for manufacturer_id in manufacturer_ids:
+        print(f"Fetching raw data from manufacturer id: {manufacturer_id}")
+        url = (
+            f"{base_url}"
+            f"&manufacturer_id={manufacturer_id}"
+        )
+        response = requests.get(url, headers=EXTERNAL_API_HEADERS)
+
+        if response.status_code == 200:
+            json_payload = response.json()
+            data_section = json_payload.get("data", {})
+            if data_section is None:
+                batch_products = []
+            else:
+                batch_products = data_section.get("products", [])
+            all_products.extend(batch_products)
+        else:
+            print(f"Request failed: {response.status_code}.")
+
+    if not all_products:
+        raise BusinessException("Products are required.")
+
+    new_raw_products = pd.DataFrame(all_products)
+
+    return new_raw_products
 
 #endregion
