@@ -293,13 +293,13 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
 #region Shared
 
 def get_products_for_display(products: list[dict]) -> str:
-    product_ids = [product['Id'] for product in products]
+    product_ids = [str(product['Id']) for product in products]
     return ', '.join(product_ids)
 
 def init_productDTO(row: pd.Series):
     return ProductDTO(
         Id=row[ID_COL_NAME], 
-        SKU=row[ID_COL_NAME],
+        # SKU=row[ID_COL_NAME],
         Stock=row[STOCK_COL_NAME], 
         Status=row[STATUS_COL_NAME], 
         Visibility=row[VISIBILITY_COL_NAME], 

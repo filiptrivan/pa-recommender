@@ -32,17 +32,15 @@ STATUS_COL_NAME = 'status'
 VISIBILITY_COL_NAME = 'visibility'
 ACTIVE_COL_NAME = 'active'
 TITLE_COL_NAME = 'title'
-CATEGORIES_COL_NAME = 'categories'
-MANUFACTURER_COL_NAME = 'manufacturer'
-PRICE_COL_NAME = 'price'
 
-TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
+# TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
 
 INTERACTION_WEIGHTS = {
-    'Bought': 1.0,
-    'PutInCart': 0.5,
-    'PutInFavorites': 0.3,
-    'Clicked': 0.1
+    'event:purchase': 1.0,
+    'event:initiate_checkout': 0.7,
+    'event:add_to_cart': 0.5,
+    'event:add_to_wishlist': 0.3,
+    # 'event:content_view': 0.1
 }
 
 EXTERNAL_API_HEADERS = {
@@ -94,7 +92,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
 
     products = raw_products_indexed.reindex(product_ids).reset_index(names=ID_COL_NAME)
-    default_values = {'stock': 0, 'status': 'Draft', 'visibility': 'Private', 'active': False }
+    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', VISIBILITY_COL_NAME: 'Private', ACTIVE_COL_NAME: False, TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
@@ -106,7 +104,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
 def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.DataFrame) -> pd.Series:
-    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format=TIMESTAMP_FORMAT)
+    timestamps = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], unit='s')
     diff_days = (now - timestamps) / np.timedelta64(1, 'D')
 
     if (diff_days < 0).any():
@@ -157,7 +155,7 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
 
     adjust_raw_data(raw_interactions, raw_products)
 
-    raw_interactions[TIMESTAMP_COL_NAME] = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], format=TIMESTAMP_FORMAT)
+    raw_interactions[TIMESTAMP_COL_NAME] = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], unit='s')
 
     product_product_dataframe = get_product_product_dataframe(raw_interactions)
 
@@ -181,7 +179,7 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
 
     products = raw_products_indexed.reindex(product_for_recommendation_ids).reset_index(names=ID_COL_NAME)
-    default_values = {'stock': 0, 'status': 'Draft', 'visibility': 'Private', 'active': False }
+    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', VISIBILITY_COL_NAME: 'Private', ACTIVE_COL_NAME: False, TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
@@ -296,7 +294,7 @@ def handle_exception(ex: Exception):
 def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
     raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
-    raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
+    # raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
 
     # Pre-cast to category for faster grouping and later extraction of codes
     raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
@@ -397,11 +395,9 @@ def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: 
     return interactions
 
 def get_products_from_external_api():
-    limit = 3000
     base_url = (
         f"{Settings().API_URL}/GET/products/"
         f"?namespace={EXTERNAL_API_NAMESPACE}"
-        f"&limit={limit}"
         "&hide_categories=true"
         "&hide_seo=true"
         "&hide_tags=true"
@@ -410,25 +406,22 @@ def get_products_from_external_api():
         "&hide_attributes=true"
         "&hide_locations=true&hide_variations=true"
     )
-    manufacturers_url = (
-        f"{Settings().API_URL}/GET/manufacturers/"
-        f"?namespace={EXTERNAL_API_NAMESPACE}"
-        f"&limit={500}" # There are only around 300 manufacturers
-    )
-    manufacturers_raw = requests.get(manufacturers_url, headers=EXTERNAL_API_HEADERS)
-    manufacturer_json = manufacturers_raw.json().get("data", {}).get("manufacturers", [])
-    manufacturers_df = pd.DataFrame(manufacturer_json)
-    print(manufacturers_df["id"].head())
-    manufacturer_ids = [2, 3, 4] # TODO: Add manufacturers endpoint and put all ids into array, so we can batch products
+
+    limit_from = 0
+    limit_range = 2500
 
     all_products = []  # will hold dicts from each batch
 
-    for manufacturer_id in manufacturer_ids:
-        print(f"Fetching raw data from manufacturer id: {manufacturer_id}")
+    while True:
+        if limit_from == 5000:
+            break
+        print(f"Fetching raw data from: {limit_from} to: {limit_from + limit_range}")
+
         url = (
             f"{base_url}"
-            f"&manufacturer_id={manufacturer_id}"
+            f"&limit={limit_from},{limit_range}"
         )
+
         response = requests.get(url, headers=EXTERNAL_API_HEADERS)
 
         if response.status_code == 200:
@@ -438,15 +431,20 @@ def get_products_from_external_api():
                 batch_products = []
             else:
                 batch_products = data_section.get("products", [])
+            if batch_products == []:
+                break
             all_products.extend(batch_products)
         else:
             print(f"Request failed: {response.status_code}.")
+        limit_from = limit_from + limit_range
 
     if not all_products:
         raise BusinessException("Products are required.")
 
     new_raw_products = pd.DataFrame(all_products)
 
-    return new_raw_products
+    filtered_products = new_raw_products[['id', 'stock', 'status', 'visibility', 'active', 'title']].copy()
+
+    return filtered_products
 
 #endregion

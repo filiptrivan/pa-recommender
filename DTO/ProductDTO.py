@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 class ProductDTO(BaseModel):
-    Id: str
+    Id: int
     Title: Optional[str] = None
     SKU: Optional[str] = None
     Price: Optional[float] = None
