@@ -202,6 +202,7 @@ def save_similar_products_recommendations(
     if len(recommendations_dict[test_product_for_similar_products]) == 0:
         test_product_for_similar_products = product_ids.iloc[0]
     
+    raise # TODO
     test_similar_products_for_display = ', '.join(recommendations_dict[test_product_for_similar_products])
 
     processingLog.append(f"Top ten '{test_product_for_similar_products}' similar products: {test_similar_products_for_display}\n")

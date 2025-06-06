@@ -304,35 +304,37 @@ def get_duration_message(start_time: pd.Timestamp) -> str:
     return f'Duration: {(pd.Timestamp.now() - start_time).seconds} seconds'
 
 def get_interactions_from_external_api():
-    base_url = f'{Settings().API_URL}/GET/activities/events/'
-    limit = 20000
-    batch_days = 10
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
+
+    base_url = (
+        f"{Settings().API_URL}/GET/activities/events/"
+        f"?namespace={EXTERNAL_API_NAMESPACE}"
+        f"&order_by=id&order_by_type=desc"
+    )
+    
+    limit_from = 0
+    limit_range = 2500
+
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
 
-    now = datetime.utcnow()
-    one_year_ago = now - timedelta(days=20)
+    one_year_ago = datetime.utcnow() - timedelta(days=20)
 
     all_activities = []  # will hold dicts from each batch
 
-    for event in events:
-        current_from = one_year_ago
-        while current_from < now: # TODO: I want till this moment
-            current_to = min(current_from + timedelta(days=batch_days), now)
-
-            from_ts = int(current_from.timestamp())
-            to_ts = int(current_to.timestamp())
+    while True:
+        if limit_from == 5000:
+            break
+        for event in events:
+            sb.append(f"Event: {event}. Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
 
             url = (
                 f"{base_url}"
-                f"?namespace={EXTERNAL_API_NAMESPACE}"
-                f"&date_filter_from={from_ts}"
-                f"&date_filter_to={to_ts}"
-                f"&order_by=id&order_by_type=desc"
+                f"&date_filter_from={one_year_ago}"
                 f"&event={event}"
-                f"&limit={limit}"
+                f"&limit={limit_from},{limit_range}"
             )
 
-            print(f"Fetching raw data from {current_from} to {current_to}")
             response = requests.get(url, headers=EXTERNAL_API_HEADERS)
 
             if response.status_code == 200:
@@ -342,11 +344,15 @@ def get_interactions_from_external_api():
                     batch_activities = []
                 else:
                     batch_activities = data_section.get("activities", [])
+
+                if batch_activities == []:
+                    break
+
                 all_activities.extend(batch_activities)
             else:
-                print(f"Request failed: {response.status_code}.")
+                sb.append(f"External CB request failed: {response.status_code}.\n")
 
-            current_from = current_to
+        limit_from = limit_from + limit_range
 
     if not all_activities:
         raise BusinessException("Interactions are required.")
@@ -357,6 +363,7 @@ def get_interactions_from_external_api():
         new_raw_interactions[['action', 'user_id', 'info', 'created']]
         .dropna(subset=['user_id'])
         .dropna(subset=['info'])
+        .copy()
     )
 
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:initiate_checkout')
@@ -373,6 +380,9 @@ def get_interactions_from_external_api():
     #endregion
 
     filtered_interactions = filtered_interactions.drop(columns=['info'])
+
+    sb.append(get_duration_message(now))
+    Emailing().send_email_and_log_info("Getting interactions from CB API", sb.__str__())
 
     return filtered_interactions
 
@@ -395,6 +405,9 @@ def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: 
     return interactions
 
 def get_products_from_external_api():
+    now = pd.Timestamp.now()
+    sb = StringBuilder()
+
     base_url = (
         f"{Settings().API_URL}/GET/products/"
         f"?namespace={EXTERNAL_API_NAMESPACE}"
@@ -415,7 +428,8 @@ def get_products_from_external_api():
     while True:
         if limit_from == 5000:
             break
-        print(f"Fetching raw data from: {limit_from} to: {limit_from + limit_range}")
+
+        sb.append(f"Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
 
         url = (
             f"{base_url}"
@@ -431,11 +445,14 @@ def get_products_from_external_api():
                 batch_products = []
             else:
                 batch_products = data_section.get("products", [])
+
             if batch_products == []:
                 break
+
             all_products.extend(batch_products)
         else:
-            print(f"Request failed: {response.status_code}.")
+            sb.append(f"External CB request failed: {response.status_code}.\n")
+
         limit_from = limit_from + limit_range
 
     if not all_products:
@@ -444,6 +461,9 @@ def get_products_from_external_api():
     new_raw_products = pd.DataFrame(all_products)
 
     filtered_products = new_raw_products[['id', 'stock', 'status', 'visibility', 'active', 'title']].copy()
+
+    sb.append(get_duration_message(now))
+    Emailing().send_email_and_log_info("Getting products from CB API", sb.__str__())
 
     return filtered_products
 

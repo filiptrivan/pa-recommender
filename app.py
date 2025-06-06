@@ -73,18 +73,8 @@ def train_homepage_model():
 @app.route('/train_homepage_model_by_http_request', methods=['GET'])
 @shared.require_api_key
 def train_homepage_model_by_http_request():
-    # interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
-    # productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
     new_raw_interactions = shared.get_interactions_from_external_api()
     new_raw_products = shared.get_products_from_external_api()
-
-    # if not new_raw_interactions:
-    #     raise BusinessException("Interactions file is required")
-    # if not productsResponse:
-    #     raise BusinessException("Products file is required")
-
-    print(new_raw_interactions.head())
-    print(new_raw_products.head())
 
     als.process_homepage_and_similar_products_recommendations(new_raw_interactions, new_raw_products)
 
