@@ -111,6 +111,7 @@ def save_homepage_recommendations(
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
             product_indexes, _ = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
+            # TODO: Check if, after the real training, there are products which should be filtered
             for i, user_index in enumerate(batch):
                 user_id = user_ids[user_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
                 products_for_recommendation = []
@@ -202,8 +203,7 @@ def save_similar_products_recommendations(
     if len(recommendations_dict[test_product_for_similar_products]) == 0:
         test_product_for_similar_products = product_ids.iloc[0]
     
-    raise # TODO
-    test_similar_products_for_display = ', '.join(recommendations_dict[test_product_for_similar_products])
+    test_similar_products_for_display = ', '.join([str(product_id) for product_id in recommendations_dict[test_product_for_similar_products]])
 
     processingLog.append(f"Top ten '{test_product_for_similar_products}' similar products: {test_similar_products_for_display}\n")
 

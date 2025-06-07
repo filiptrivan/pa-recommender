@@ -361,10 +361,11 @@ def get_interactions_from_external_api():
 
     filtered_interactions = (
         new_raw_interactions[['action', 'user_id', 'info', 'created']]
-        .dropna(subset=['user_id'])
-        .dropna(subset=['info'])
+        .dropna(subset=['user_id', 'info'])
         .copy()
     )
+
+    filtered_interactions['user_id'] = filtered_interactions['user_id'].astype(int)
 
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:initiate_checkout')
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:purchase')
