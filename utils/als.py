@@ -82,7 +82,7 @@ def save_homepage_and_similar_products_recommendations(
     processingLog.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
     save_homepage_recommendations(model, sparse_user_product_matrix, user_ids, products, product_indexes_to_filter, processingLog)
-    save_similar_products_recommendations(model, products, product_indexes_to_filter, processingLog)
+    # save_similar_products_recommendations(model, products, product_indexes_to_filter, processingLog)
     
     processingLog.append(shared.get_duration_message(now))
     Emailing().send_email_and_log_info("Saving homepage and similar products recommendations", processingLog.__str__())
@@ -108,6 +108,7 @@ def save_homepage_recommendations(
     redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
 
     try:
+        redis_pipeline.set(name='top_ten_overall_recommendations', ex=604800, value=json.dumps(recommendations_dict['top_ten_overall_recommendations'])) # ex=7 days
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
             product_indexes, _ = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
@@ -118,7 +119,7 @@ def save_homepage_recommendations(
                 for product_index in product_indexes[i]:
                     product = products.iloc[product_index]
                     productDTO = init_productDTO(product)
-                    products_for_recommendation.append(productDTO.__dict__)
+                    products_for_recommendation.append(productDTO.Id)
                 recommendations_dict[user_id] = products_for_recommendation
                 redis_pipeline.set(name=user_id, ex=604800, value=json.dumps(products_for_recommendation)) # ex=7 days
         redis_pipeline.execute()
@@ -138,7 +139,7 @@ def save_homepage_recommendations(
     return recommendations_dict
 
 def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, products: pd.DataFrame, product_indexes_to_filter: pd.Index) -> list[dict]:
-    result: list[dict] = []
+    result: list[int] = []
 
     # FT: Because we are not modifying product_ratings ravel is faster then flatten
     product_ratings = np.array(sparse_user_product_matrix.sum(axis=0)).ravel()
@@ -159,7 +160,7 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
 
     for _, product in top_10_products.iterrows():
         productDTO = init_productDTO(product)
-        result.append(productDTO.__dict__)
+        result.append(productDTO.Id)
 
     return result
 

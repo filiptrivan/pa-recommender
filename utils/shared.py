@@ -318,19 +318,21 @@ def get_interactions_from_external_api():
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=20)
+    one_year_ago = datetime.utcnow() - timedelta(days=30)
+    one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # will hold dicts from each batch
 
     while True:
-        if limit_from == 5000:
-            break
+        all_empty = True  # Will track if all events returned empty batches this iteration
+
         for event in events:
             sb.append(f"Event: {event}. Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
+            print(f"Event: {event}. Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
 
             url = (
                 f"{base_url}"
-                f"&date_filter_from={one_year_ago}"
+                f"&date_filter_from={one_year_ago_unix_timestamp}"
                 f"&event={event}"
                 f"&limit={limit_from},{limit_range}"
             )
@@ -340,17 +342,16 @@ def get_interactions_from_external_api():
             if response.status_code == 200:
                 json_payload = response.json()
                 data_section = json_payload.get("data", {})
-                if data_section is None:
-                    batch_activities = []
-                else:
-                    batch_activities = data_section.get("activities", [])
+                batch_activities = data_section.get("activities", []) if data_section else []
 
-                if batch_activities == []:
-                    break
-
-                all_activities.extend(batch_activities)
+                if batch_activities != []:
+                    all_activities.extend(batch_activities)
+                    all_empty = False  # At least one event had data this iteration
             else:
                 sb.append(f"External CB request failed: {response.status_code}.\n")
+
+        if all_empty:
+            break  # All events returned empty lists, stop fetching more
 
         limit_from = limit_from + limit_range
 
@@ -427,9 +428,6 @@ def get_products_from_external_api():
     all_products = []  # will hold dicts from each batch
 
     while True:
-        if limit_from == 5000:
-            break
-
         sb.append(f"Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
 
         url = (
@@ -442,11 +440,8 @@ def get_products_from_external_api():
         if response.status_code == 200:
             json_payload = response.json()
             data_section = json_payload.get("data", {})
-            if data_section is None:
-                batch_products = []
-            else:
-                batch_products = data_section.get("products", [])
-
+            batch_products = data_section.get("products", []) if data_section else []
+            
             if batch_products == []:
                 break
 
