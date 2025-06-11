@@ -39,6 +39,9 @@ HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
     password=Settings().HOMEPAGE_RECOMMENDER_REDIS_PASS
 )
 
+TOP_TEN_OVERALL_RECOMMENDATIONS_KEY = 'top_ten_overall_recommendations'
+HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
+
 SIMILAR_PRODUCTS_RECOMMENDER_REDIS = redis.Redis(
     host='redis-13102.c250.eu-central-1-1.ec2.redns.redis-cloud.com',
     port=13102,
@@ -46,6 +49,9 @@ SIMILAR_PRODUCTS_RECOMMENDER_REDIS = redis.Redis(
     username=Settings().REDIS_USERNAME,
     password=Settings().SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS
 )
+
+SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
+
 
 # FT: We can not pass partial interactions because of timestamp updates
 def process_homepage_and_similar_products_recommendations(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
@@ -99,8 +105,8 @@ def save_homepage_recommendations(
 
     recommendations_dict = defaultdict(list)
 
-    recommendations_dict['top_ten_overall_recommendations'] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
-    processingLog.append(f"Top ten overall recommendations: {get_products_for_display(recommendations_dict['top_ten_overall_recommendations'])}\n")
+    recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
+    processingLog.append(f"Top ten overall recommendations: {get_products_for_display(recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY])}\n")
 
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
@@ -108,7 +114,7 @@ def save_homepage_recommendations(
     redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
 
     try:
-        redis_pipeline.set(name='top_ten_overall_recommendations', ex=604800, value=json.dumps(recommendations_dict['top_ten_overall_recommendations'])) # ex=7 days
+        redis_pipeline.set(name=TOP_TEN_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
             product_indexes, _ = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
@@ -121,7 +127,7 @@ def save_homepage_recommendations(
                     productDTO = init_productDTO(product)
                     products_for_recommendation.append(productDTO.Id)
                 recommendations_dict[user_id] = products_for_recommendation
-                redis_pipeline.set(name=user_id, ex=604800, value=json.dumps(products_for_recommendation)) # ex=7 days
+                redis_pipeline.set(name=user_id, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(products_for_recommendation)) # ex=7 days
         redis_pipeline.execute()
     except Exception as ex:
         redis_pipeline.reset()
@@ -193,7 +199,7 @@ def save_similar_products_recommendations(
                     if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
                         similar_products.append(product_id)
                 recommendations_dict[product_to_recommend_id] = similar_products
-                redis_pipeline.set(name=product_to_recommend_id, ex=604800, value=json.dumps(similar_products)) # ex=7 days
+                redis_pipeline.set(name=product_to_recommend_id, ex=SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(similar_products)) # ex=7 days
         redis_pipeline.execute()
     except Exception as ex:
         redis_pipeline.reset()
