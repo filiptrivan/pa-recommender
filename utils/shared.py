@@ -294,7 +294,6 @@ def handle_exception(ex: Exception):
 def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
     raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
-    # raw_products[PRICE_COL_NAME] = raw_products[PRICE_COL_NAME].astype(float)
 
     # Pre-cast to category for faster grouping and later extraction of codes
     raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
@@ -314,14 +313,14 @@ def get_interactions_from_external_api():
     )
     
     limit_from = 0
-    limit_range = 2500
+    limit_range = 10000
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=30)
+    one_year_ago = datetime.utcnow() - timedelta(days=50)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
-    all_activities = []  # will hold dicts from each batch
+    all_activities = []  # Will hold dicts from each batch
 
     while True:
         all_empty = True  # Will track if all events returned empty batches this iteration
