@@ -10,5 +10,3 @@ class ProductDTO(BaseModel):
     Manufacturer: Optional[str] = None
     Categories: Optional[str] = None
     Status: Optional[str] = None
-    Visibility: Optional[str] = None
-    Active: Optional[bool] = None

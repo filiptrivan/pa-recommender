@@ -25,8 +25,6 @@ import redis
 ID_COL_NAME = 'id'
 STOCK_COL_NAME = 'stock'
 STATUS_COL_NAME = 'status'
-VISIBILITY_COL_NAME = 'visibility'
-ACTIVE_COL_NAME = 'active'
 TITLE_COL_NAME = 'title'
 
 #region Homepage And Similar Products Recommender
@@ -310,8 +308,6 @@ def init_productDTO(row: pd.Series):
         # SKU=row[ID_COL_NAME],
         Stock=row[STOCK_COL_NAME], 
         Status=row[STATUS_COL_NAME], 
-        Visibility=row[VISIBILITY_COL_NAME], 
-        Active=row[ACTIVE_COL_NAME],
         Title=row[TITLE_COL_NAME]
     )
 
@@ -326,8 +322,6 @@ def get_product_indexes_to_filter(products: pd.DataFrame) -> pd.Index:
     return products.loc[
         (products[STOCK_COL_NAME] == 0) |
         (products[STATUS_COL_NAME] != 'Published') |
-        (products[VISIBILITY_COL_NAME] != 'Public') |
-        (products[ACTIVE_COL_NAME] != True)
     ].index
 
 #endregion

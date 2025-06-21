@@ -29,8 +29,6 @@ TIMESTAMP_COL_NAME = 'created'
 ID_COL_NAME = 'id'
 STOCK_COL_NAME = 'stock'
 STATUS_COL_NAME = 'status'
-VISIBILITY_COL_NAME = 'visibility'
-ACTIVE_COL_NAME = 'active'
 TITLE_COL_NAME = 'title'
 
 # TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
@@ -92,7 +90,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
 
     products = raw_products_indexed.reindex(product_ids).reset_index(names=ID_COL_NAME)
-    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', VISIBILITY_COL_NAME: 'Private', ACTIVE_COL_NAME: False, TITLE_COL_NAME: 'Unknown Title' }
+    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
@@ -179,7 +177,7 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
 
     products = raw_products_indexed.reindex(product_for_recommendation_ids).reset_index(names=ID_COL_NAME)
-    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', VISIBILITY_COL_NAME: 'Private', ACTIVE_COL_NAME: False, TITLE_COL_NAME: 'Unknown Title' }
+    default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
     clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
@@ -293,7 +291,6 @@ def handle_exception(ex: Exception):
 
 def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
-    raw_products[ACTIVE_COL_NAME] = raw_products[ACTIVE_COL_NAME].astype(bool)
 
     # Pre-cast to category for faster grouping and later extraction of codes
     raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
