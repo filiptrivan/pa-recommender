@@ -34,11 +34,11 @@ TITLE_COL_NAME = 'title'
 # TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
 
 INTERACTION_WEIGHTS = {
-    'event:purchase': 1.0,
-    'event:initiate_checkout': 0.7,
-    'event:add_to_cart': 0.5,
-    'event:add_to_wishlist': 0.3,
-    # 'event:content_view': 0.1
+    'purchase': 1.0,
+    'initiate_checkout': 0.7,
+    'add_to_cart': 0.5,
+    'add_to_wishlist': 0.3,
+    # 'content_view': 0.1
 }
 
 EXTERNAL_API_HEADERS = {
@@ -88,6 +88,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     missing_ids = pd.Index(product_ids).difference(raw_products_indexed.index)
     if not missing_ids.empty:
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
+        sb.append(f"Products that were not found: {', '.join(map(str, missing_ids))}\n")
 
     products = raw_products_indexed.reindex(product_ids).reset_index(names=ID_COL_NAME)
     default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
@@ -293,8 +294,8 @@ def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     raw_products[STOCK_COL_NAME] = raw_products[STOCK_COL_NAME].astype(int)
 
     # Pre-cast to category for faster grouping and later extraction of codes
-    raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype('category')
-    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype('category')
+    raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype(int).astype('category')
+    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype(int).astype('category') # CB API returns some IDs as strings; convert to int for consistency
 
 def get_duration_message(start_time: pd.Timestamp) -> str:
     return f'Duration: {(pd.Timestamp.now() - start_time).seconds} seconds'
@@ -304,7 +305,7 @@ def get_interactions_from_external_api():
     sb = StringBuilder()
 
     base_url = (
-        f"{Settings().API_URL}/GET/activities/events/"
+        f"{Settings().API_URL}/GET/events/"
         f"?namespace={EXTERNAL_API_NAMESPACE}"
         f"&order_by=id&order_by_type=desc"
     )
@@ -312,9 +313,9 @@ def get_interactions_from_external_api():
     limit_from = 0
     limit_range = 10000
 
-    events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist']
+    events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist'] #,'content_view']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=50)
+    one_year_ago = datetime.utcnow() - timedelta(days=30)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
@@ -364,13 +365,13 @@ def get_interactions_from_external_api():
 
     filtered_interactions['user_id'] = filtered_interactions['user_id'].astype(int)
 
-    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:initiate_checkout')
-    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:purchase')
-    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'event:add_to_wishlist')
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'initiate_checkout')
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'purchase')
+    filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'add_to_wishlist')
 
     #region Add To Cart
 
-    mask_addtocart = filtered_interactions['action'] == 'event:add_to_cart'
+    mask_addtocart = filtered_interactions['action'] == 'add_to_cart'
     info_addtocart = filtered_interactions.loc[mask_addtocart, 'info'].tolist()
     temp_info_addtocart_df = pd.DataFrame(info_addtocart, index=filtered_interactions.loc[mask_addtocart].index)
     filtered_interactions.loc[mask_addtocart, 'product_id'] = temp_info_addtocart_df['id']
@@ -407,7 +408,7 @@ def get_products_from_external_api():
     sb = StringBuilder()
 
     base_url = (
-        f"{Settings().API_URL}/GET/products/"
+        f"{Settings().API_URL}/GET/products/short"
         f"?namespace={EXTERNAL_API_NAMESPACE}"
         "&hide_categories=true"
         "&hide_seo=true"
@@ -419,7 +420,7 @@ def get_products_from_external_api():
     )
 
     limit_from = 0
-    limit_range = 2500
+    limit_range = 10_000
 
     all_products = []  # will hold dicts from each batch
 

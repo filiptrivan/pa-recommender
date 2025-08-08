@@ -5,13 +5,6 @@ import implicit
 from implicit.recommender_base import RecommenderBase
 import numpy as np
 import implicit
-import redis.cache
-import redis.client
-import redis.commands
-import redis.connection
-import redis.retry
-import redis.typing
-import redis.utils
 from scipy.sparse import csr_matrix
 import json
 
@@ -30,8 +23,8 @@ TITLE_COL_NAME = 'title'
 #region Homepage And Similar Products Recommender
 
 HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-13102.c250.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=13102,
+    host='redis-13503.c293.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=13503,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().HOMEPAGE_RECOMMENDER_REDIS_PASS
@@ -321,7 +314,7 @@ def store_loss(output: StringBuilder):
 def get_product_indexes_to_filter(products: pd.DataFrame) -> pd.Index:
     return products.loc[
         (products[STOCK_COL_NAME] == 0) |
-        (products[STATUS_COL_NAME] != 'Published') |
+        (products[STATUS_COL_NAME] != 'Published')
     ].index
 
 #endregion
