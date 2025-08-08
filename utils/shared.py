@@ -275,7 +275,8 @@ def handle_exception(ex: Exception):
         code = 500
         log_level = logging.ERROR
         message = "An error occurred in the system, our team has been informed and will fix it as soon as possible. Thank you for your patience."
-        Emailing().send_email(Settings().EXCEPTION_EMAILS, 'Unhandled exception in pa-recommender', traceback.format_exc())
+
+    Emailing().send_email(Settings().EXCEPTION_EMAILS, 'Exception occurred in pa-recommender', traceback.format_exc())
 
     logger.log(log_level, f"Request path: '{request_path}'\n{traceback.format_exc()}")
 
@@ -408,15 +409,8 @@ def get_products_from_external_api():
     sb = StringBuilder()
 
     base_url = (
-        f"{Settings().API_URL}/GET/products/short"
+        f"{Settings().API_URL}/GET/products/short/"
         f"?namespace={EXTERNAL_API_NAMESPACE}"
-        "&hide_categories=true"
-        "&hide_seo=true"
-        "&hide_tags=true"
-        "&hide_manufacturer=true"
-        "&hide_items=true"
-        "&hide_attributes=true"
-        "&hide_locations=true&hide_variations=true"
     )
 
     limit_from = 0
@@ -444,7 +438,8 @@ def get_products_from_external_api():
 
             all_products.extend(batch_products)
         else:
-            sb.append(f"External CB request failed: {response.status_code}.\n")
+            sb.append(f"External CB request failed: {response}.\n")
+            break
 
         limit_from = limit_from + limit_range
 
@@ -453,7 +448,7 @@ def get_products_from_external_api():
 
     new_raw_products = pd.DataFrame(all_products)
 
-    filtered_products = new_raw_products[['id', 'stock', 'status', 'visibility', 'active', 'title']].copy()
+    filtered_products = new_raw_products[['id', 'stock', 'status', 'title']].copy()
 
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Getting products from CB API", sb.__str__())
