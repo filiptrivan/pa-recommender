@@ -44,7 +44,7 @@ SIMILAR_PRODUCTS_RECOMMENDER_REDIS = redis.Redis(
 SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
 
 
-# FT: We can not pass partial interactions because of timestamp updates
+# We can not pass partial interactions because of timestamp updates
 def process_homepage_and_similar_products_recommendations(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
 
@@ -56,7 +56,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    # calculate_training_loss needs to be true if we want to fit_callback work
     model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
@@ -111,7 +111,7 @@ def save_homepage_recommendations(
             product_indexes, _ = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
             # TODO: Check if, after the real training, there are products which should be filtered
             for i, user_index in enumerate(batch):
-                user_id = user_ids[user_index] # FT: Not casting here improved performance for 10 sec for 500k interactions
+                user_id = user_ids[user_index] # Not casting here improved performance for 10 sec for 500k interactions
                 products_for_recommendation = []
                 for product_index in product_indexes[i]:
                     product = products.iloc[product_index]
@@ -138,7 +138,7 @@ def save_homepage_recommendations(
 def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, products: pd.DataFrame, product_indexes_to_filter: pd.Index) -> list[dict]:
     result: list[int] = []
 
-    # FT: Because we are not modifying product_ratings ravel is faster then flatten
+    # Because we are not modifying product_ratings ravel is faster then flatten
     product_ratings = np.array(sparse_user_product_matrix.sum(axis=0)).ravel()
 
     rated_product_counts = sparse_user_product_matrix.getnnz(axis=0)
@@ -169,7 +169,7 @@ def save_similar_products_recommendations(
 ):
     processingLog.append('\nSimilar products recommendations saving\n')
     
-    product_ids = products[ID_COL_NAME].tolist()
+    product_ids = products[ID_COL_NAME].tolist() # Only tolist() worked to convert from int32 to int
 
     recommendations_dict = defaultdict(list)
 
@@ -187,7 +187,7 @@ def save_similar_products_recommendations(
                 similar_products = []
                 for product_index in product_for_recommendation_indexes[i]:
                     product_id = product_ids[product_index]
-                    if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
+                    if product_id != product_to_recommend_id: # Skip itself, we don't want to show itself
                         similar_products.append(product_id)
                 recommendations_dict[product_to_recommend_id] = similar_products
                 redis_pipeline.set(name=product_to_recommend_id, ex=SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(similar_products)) # ex=7 days
@@ -219,7 +219,7 @@ CROSS_SELL_RECOMMENDER_REDIS = redis.Redis(
     password=Settings().REDIS_PASSWORD
 )
 
-# FT: We can not pass partial interactions because of timestamp updates
+# We can not pass partial interactions because of timestamp updates
 def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
 
@@ -231,7 +231,7 @@ def cross_sell_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # FT: calculate_training_loss needs to be true if we want to fit_callback work
+    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # calculate_training_loss needs to be true if we want to fit_callback work
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -263,7 +263,7 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
                 products_for_cross_sell = []
                 for product_index in product_for_recommendation_indexes[i]:
                     product_id = products_for_recommendation.iloc[product_index][ID_COL_NAME]
-                    if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
+                    if product_id != product_to_recommend_id: # Skip itself, we don't want to show itself
                         products_for_cross_sell.append(product_id)
                 recommendations_dict[product_to_recommend_id] = products_for_cross_sell
                 # Persistant, because it's product to product interactions, for this we need the best data possible, we shouldn't retrain it in short period
