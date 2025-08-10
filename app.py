@@ -101,18 +101,10 @@ def train_cross_sell_model():
 @app.route('/train_cross_sell_model_by_http_request', methods=['GET'])
 @shared.require_api_key
 def train_cross_sell_model_by_http_request():
-    interactionsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetInteractions', verify=False)
-    productsResponse = requests.get('https://localhost:44357/api/PlayertyLoyals/GetProducts', verify=False)
+    new_raw_interactions = shared.get_interactions_from_external_api()
+    new_raw_products = shared.get_products_from_external_api()
 
-    if not interactionsResponse:
-        raise BusinessException("Interactions file is required")
-    if not productsResponse:
-        raise BusinessException("Products file is required")
-
-    new_raw_interactions = pd.DataFrame(interactionsResponse.json())
-    new_raw_products = pd.DataFrame(productsResponse.json())
-
-    als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
+    als.process_cross_sell_recommendation(new_raw_interactions, new_raw_products)
     
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 

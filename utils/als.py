@@ -27,18 +27,18 @@ HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
     port=13503,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
-    password=Settings().HOMEPAGE_RECOMMENDER_REDIS_PASS
+    password=Settings().REDIS_PASSWORD
 )
 
 TOP_TEN_OVERALL_RECOMMENDATIONS_KEY = 'top_ten_overall_recommendations'
 HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
 
 SIMILAR_PRODUCTS_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-13102.c250.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=13102,
+    host='redis-18870.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
+    port=18870,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
-    password=Settings().SIMILAR_PRODUCTS_RECOMMENDER_REDIS_PASS
+    password=Settings().REDIS_PASSWORD
 )
 
 SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
@@ -79,7 +79,7 @@ def save_homepage_and_similar_products_recommendations(
     processingLog.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
     save_homepage_recommendations(model, sparse_user_product_matrix, user_ids, products, product_indexes_to_filter, processingLog)
-    # save_similar_products_recommendations(model, products, product_indexes_to_filter, processingLog)
+    save_similar_products_recommendations(model, products, product_indexes_to_filter, processingLog)
     
     processingLog.append(shared.get_duration_message(now))
     Emailing().send_email_and_log_info("Saving homepage and similar products recommendations", processingLog.__str__())
@@ -169,7 +169,7 @@ def save_similar_products_recommendations(
 ):
     processingLog.append('\nSimilar products recommendations saving\n')
     
-    product_ids = products[ID_COL_NAME]
+    product_ids = products[ID_COL_NAME].tolist()
 
     recommendations_dict = defaultdict(list)
 
@@ -183,10 +183,10 @@ def save_similar_products_recommendations(
             batch = to_generate[startidx : startidx + batch_size]
             product_for_recommendation_indexes, _ = model.similar_items(batch, filter_items=product_indexes_to_filter)
             for i, product_to_recommend_index in enumerate(batch):
-                product_to_recommend_id = product_ids.iloc[product_to_recommend_index]
+                product_to_recommend_id = product_ids[product_to_recommend_index]
                 similar_products = []
                 for product_index in product_for_recommendation_indexes[i]:
-                    product_id = product_ids.iloc[product_index]
+                    product_id = product_ids[product_index]
                     if product_id != product_to_recommend_id: # FT: Skip itself, we don't want to show itself
                         similar_products.append(product_id)
                 recommendations_dict[product_to_recommend_id] = similar_products
@@ -199,7 +199,7 @@ def save_similar_products_recommendations(
     test_product_for_similar_products = Settings().TEST_PRODUCT_FOR_SIMILAR_PRODUCTS
 
     if len(recommendations_dict[test_product_for_similar_products]) == 0:
-        test_product_for_similar_products = product_ids.iloc[0]
+        test_product_for_similar_products = product_ids[0]
     
     test_similar_products_for_display = ', '.join([str(product_id) for product_id in recommendations_dict[test_product_for_similar_products]])
 
@@ -212,20 +212,20 @@ def save_similar_products_recommendations(
 #region Cross Sell Recommender
 
 CROSS_SELL_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-10822.c300.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=10822,
+    host='redis-19259.c135.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=19259,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
-    password=Settings().CROSS_SELL_RECOMMENDER_REDIS_PASS
+    password=Settings().REDIS_PASSWORD
 )
 
 # FT: We can not pass partial interactions because of timestamp updates
-def get_cross_sell_recommendation_result(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
 
     model = cross_sell_train_model(sparse_product_product_matrix)
 
-    return save_cross_sell_recommendations(model, sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation)
+    save_cross_sell_recommendations(model, sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation)
 
 def cross_sell_train_model(sparse_user_product):
     now = pd.Timestamp.now()
