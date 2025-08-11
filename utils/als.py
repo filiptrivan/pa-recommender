@@ -244,6 +244,9 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
+    product_to_recommend_ids = product_to_recommend_ids.tolist()
+    products_for_recommendation_ids = products_for_recommendation[ID_COL_NAME].tolist()
+
     product_indexes_to_filter = get_product_indexes_to_filter(products_for_recommendation)
     sb.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
@@ -262,7 +265,7 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
                 product_to_recommend_id = product_to_recommend_ids[product_to_recommend_index]
                 products_for_cross_sell = []
                 for product_index in product_for_recommendation_indexes[i]:
-                    product_id = products_for_recommendation.iloc[product_index][ID_COL_NAME]
+                    product_id = products_for_recommendation_ids[product_index]
                     if product_id != product_to_recommend_id: # Skip itself, we don't want to show itself
                         products_for_cross_sell.append(product_id)
                 recommendations_dict[product_to_recommend_id] = products_for_cross_sell
@@ -278,7 +281,7 @@ def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_produ
     if len(recommendations_dict[test_product_for_cross_sell]) == 0:
         test_product_for_cross_sell = product_to_recommend_ids[0]
     
-    test_recommendations_for_display = ', '.join(recommendations_dict[test_product_for_cross_sell])
+    test_recommendations_for_display = ', '.join([str(product_id) for product_id in recommendations_dict[test_product_for_cross_sell]])
 
     sb.append(f"Top ten '{test_product_for_cross_sell}' recommendations: {test_recommendations_for_display}\n")
 
