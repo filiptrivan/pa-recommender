@@ -22,7 +22,7 @@ import redis
 logger = logging.getLogger(__name__)
 
 PRODUCT_COL_NAME = 'product_id'
-USER_COL_NAME = 'user_id'
+USER_COL_NAME = 'user_uid'
 INTERACTION_COL_NAME = 'action'
 TIMESTAMP_COL_NAME = 'created'
 
@@ -296,7 +296,11 @@ def adjust_raw_data(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
 
     # Pre-cast to category for faster grouping and later extraction of codes
     raw_interactions[PRODUCT_COL_NAME] = raw_interactions[PRODUCT_COL_NAME].astype(int).astype('category')
-    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype(int).astype('category') # CB API returns some IDs as strings; convert to int for consistency
+    
+    # NOTE: If we switch the logic back to user_id, uncomment this code
+    # CB API returns some IDs as strings; convert to int for consistency 
+    # raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype(int).astype('category') 
+    raw_interactions[USER_COL_NAME] = raw_interactions[USER_COL_NAME].astype('category')
 
 def get_duration_message(start_time: pd.Timestamp) -> str:
     return f'Duration: {(pd.Timestamp.now() - start_time).seconds} seconds'
@@ -359,12 +363,12 @@ def get_interactions_from_external_api():
     new_raw_interactions = pd.DataFrame(all_activities)
 
     filtered_interactions = (
-        new_raw_interactions[['action', 'user_id', 'info', 'created']]
-        .dropna(subset=['user_id', 'info'])
+        new_raw_interactions[['action', USER_COL_NAME, 'info', 'created']]
+        .dropna(subset=[USER_COL_NAME, 'info'])
         .copy()
     )
 
-    filtered_interactions['user_id'] = filtered_interactions['user_id'].astype(int)
+    # filtered_interactions[USER_COL_NAME] = filtered_interactions[USER_COL_NAME].astype(int) # NOTE: If we switch the logic back to user_id, uncomment this code
 
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'initiate_checkout')
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'purchase')
