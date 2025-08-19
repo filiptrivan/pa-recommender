@@ -38,7 +38,7 @@ INTERACTION_WEIGHTS = {
     'initiate_checkout': 0.7,
     'add_to_cart': 0.5,
     'add_to_wishlist': 0.3,
-    # 'content_view': 0.1
+    'content_view': 0.1
 }
 
 EXTERNAL_API_HEADERS = {
@@ -318,9 +318,9 @@ def get_interactions_from_external_api():
     limit_from = 0
     limit_range = 10000
 
-    events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist'] #,'content_view']
+    events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist', 'content_view']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=30)
+    one_year_ago = datetime.utcnow() - timedelta(days=365)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
@@ -348,12 +348,11 @@ def get_interactions_from_external_api():
 
                 if batch_activities != []:
                     all_activities.extend(batch_activities)
-                    all_empty = False  # At least one event had data this iteration
+                    all_empty = False # At least one event had data this iteration
             else:
-                sb.append(f"External CB request failed: {response.status_code}.\n")
-
+                raise BusinessException(f"External CB request failed: {response}.\n")
         if all_empty:
-            break  # All events returned empty lists, stop fetching more
+            break # All events returned empty lists, stop fetching more
 
         limit_from = limit_from + limit_range
 
@@ -374,14 +373,14 @@ def get_interactions_from_external_api():
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'purchase')
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'add_to_wishlist')
 
-    #region Add To Cart
+    manipulate_action_with_product_id(filtered_interactions, 'add_to_cart')
+    manipulate_action_with_product_id(filtered_interactions, 'content_view')
 
-    mask_addtocart = filtered_interactions['action'] == 'add_to_cart'
-    info_addtocart = filtered_interactions.loc[mask_addtocart, 'info'].tolist()
-    temp_info_addtocart_df = pd.DataFrame(info_addtocart, index=filtered_interactions.loc[mask_addtocart].index)
-    filtered_interactions.loc[mask_addtocart, 'product_id'] = temp_info_addtocart_df['id']
-
-    #endregion
+    filtered_interactions = filtered_interactions[
+        (filtered_interactions['product_id'].notnull()) & 
+        (filtered_interactions['product_id'] != '') & 
+        (filtered_interactions['product_id'] != 'nan') # CB has 'nan' values for product_id so we need to do this
+    ].reset_index(drop=True)
 
     filtered_interactions = filtered_interactions.drop(columns=['info'])
 
@@ -406,7 +405,14 @@ def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: 
 
     others = interactions.loc[~mask].copy().reset_index(drop=True)
     interactions = pd.concat([others, exploded], ignore_index=True)
+
     return interactions
+
+def manipulate_action_with_product_id(interactions: pd.DataFrame, action_name: str):
+    mask = interactions['action'] == action_name
+    info = interactions.loc[mask, 'info'].tolist()
+    temp_info_df = pd.DataFrame(info, index=interactions.loc[mask].index)
+    interactions.loc[mask, 'product_id'] = temp_info_df['id']
 
 def get_products_from_external_api():
     now = pd.Timestamp.now()
@@ -442,8 +448,7 @@ def get_products_from_external_api():
 
             all_products.extend(batch_products)
         else:
-            sb.append(f"External CB request failed: {response}.\n")
-            break
+            raise BusinessException(f"External CB request failed: {response}.\n")
 
         limit_from = limit_from + limit_range
 

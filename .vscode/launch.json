@@ -2,7 +2,6 @@
     // https://stackoverflow.com/questions/39056448/debug-a-flask-python-web-application-in-visual-studio-code
     "version": "0.2.0",
     "configurations": [
-        
         {
             "name": "Flask",
             "type": "debugpy",

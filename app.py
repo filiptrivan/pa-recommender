@@ -70,9 +70,9 @@ def train_homepage_model():
     
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
-@app.route('/train_homepage_model_by_http_request', methods=['GET'])
+@app.route('/train_homepage_and_similar_products_model_by_http_request', methods=['GET'])
 @shared.require_api_key
-def train_homepage_model_by_http_request():
+def train_homepage_and_similar_products_model_by_http_request():
     new_raw_interactions = shared.get_interactions_from_external_api()
     new_raw_products = shared.get_products_from_external_api()
 
@@ -94,7 +94,7 @@ def train_cross_sell_model():
     new_raw_interactions = pd.read_csv(StringIO(interactions_file.stream.read().decode()))
     new_raw_products = pd.read_csv(StringIO(products_file.stream.read().decode()))
 
-    als.get_cross_sell_recommendation_result(new_raw_interactions, new_raw_products)
+    als.process_cross_sell_recommendation(new_raw_interactions, new_raw_products)
 
     return jsonify({"message": "Model trained and recommendations updated"}), 200
 
