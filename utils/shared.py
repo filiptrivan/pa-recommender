@@ -90,11 +90,11 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         sb.append(f"The product ids that were not found count: {len(missing_ids)}\n")
         sb.append(f"Products that were not found: {', '.join(map(str, missing_ids))}\n")
 
-    products = raw_products_indexed.reindex(product_ids).reset_index(names=ID_COL_NAME)
+    products = raw_products_indexed.reindex(product_ids).reset_index(names=ID_COL_NAME) # Rows in the same order as sparse matrix columns
     default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
-    clean_sparse_interactions = bm25_weight(clean_sparse_interactions, K1=100, B=0.8).tocsr()
+    clean_sparse_interactions = bm25_weight(clean_sparse_interactions).tocsr()
 
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Homepage and similar products recommender data cleaning", sb.__str__())
@@ -117,22 +117,20 @@ def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.
     decayed_weights = weights * np.exp(-diff_days / RECENCY_DECAY_SCALE) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
     return decayed_weights
 
-# FT: Copied from the implicit library, only changed so it's working with columns
-def bm25_weight(X, K1=100, B=0.8):
-    """Weighs each column of a sparse matrix X by BM25 weighting"""
-    X = coo_matrix(X)
-
-    N = float(X.shape[1]) # Total number of products
-    idf = np.log(N) - np.log1p(np.bincount(X.row)) # Inverse Document Frequency
-
-    # calculate length_norm per column (product)
+def bm25_weight(X, K1=1.2, B=0.75):
+    """BM25 weighting for sparse user-item matrix"""
+    X = coo_matrix(X, copy=True)
+    
+    N = float(X.shape[0])  # total users
+    df = np.bincount(X.col)  # number of users per product
+    idf = np.log((N - df + 0.5) / (df + 0.5))
+    
     col_sums = np.ravel(X.sum(axis=0))
-    average_length = col_sums.mean()
-    length_norm = (1.0 - B) + B * col_sums / average_length
-
-    # weight matrix rows by bm25
-    X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.col] + X.data) * idf[X.row]
-    return X
+    avg_len = col_sums.mean()
+    length_norm = (1 - B) + B * col_sums / avg_len
+    
+    X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.col] + X.data) * idf[X.col]
+    return X.tocsr()
 
 #endregion
 
@@ -320,7 +318,7 @@ def get_interactions_from_external_api():
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist', 'content_view']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=365)
+    one_year_ago = datetime.utcnow() - timedelta(days=9)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
@@ -361,8 +359,12 @@ def get_interactions_from_external_api():
 
     new_raw_interactions = pd.DataFrame(all_activities)
 
+    dict_info_mask = (new_raw_interactions["info"].map(type) == dict) & \
+        (new_raw_interactions["info"].map(len) > 0)
+
     filtered_interactions = (
-        new_raw_interactions[['action', USER_COL_NAME, 'info', 'created']]
+        new_raw_interactions
+        .loc[dict_info_mask, ['action', USER_COL_NAME, 'info', 'created']]
         .dropna(subset=[USER_COL_NAME, 'info'])
         .copy()
     )

@@ -23,8 +23,8 @@ TITLE_COL_NAME = 'title'
 #region Homepage And Similar Products Recommender
 
 HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-13503.c293.eu-central-1-1.ec2.redns.redis-cloud.com',
-    port=13503,
+    host='redis-15506.c311.eu-central-1-1.ec2.redns.redis-cloud.com',
+    port=15506,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().REDIS_PASSWORD
@@ -56,8 +56,23 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
+    sb.append(f'(number of users, number of products): {sparse_user_product.shape}\n')
+    sb.append(f'Number of non-zero interactions: {sparse_user_product.nnz}\n')
+    sb.append(f'Density: {sparse_user_product.nnz / (sparse_user_product.shape[0] * sparse_user_product.shape[1]):.8f}\n')
+
+    percentiles = np.percentile(sparse_user_product.data, [0, 25, 50, 75, 100])
+    labels = ["0%", "25%", "50%", "75%", "100%"]
+    for l, p in zip(labels, percentiles):
+        sb.append(f"{l}: {p:.4f}\n")
+
+    # α controls how much more important observed interactions are compared to unobserved ones (which always have weight = 1).
+    # Too small → model ignores your positives, loss is tiny, recommendations are generic.
+    # Too large → model overfits to observed interactions, ignores zeros, may recommend only very popular items.
+
+    # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
+
     # calculate_training_loss needs to be true if we want to fit_callback work
-    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=64, regularization=0.01, alpha=15, iterations=20, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -76,6 +91,7 @@ def save_homepage_and_similar_products_recommendations(
     processingLog = StringBuilder()
 
     product_indexes_to_filter = get_product_indexes_to_filter(products)
+    # processingLog.append(f"Product ids to filter: {', '.join(map(str, product_indexes_to_filter))}\n")
     processingLog.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
     save_homepage_recommendations(model, sparse_user_product_matrix, user_ids, products, product_indexes_to_filter, processingLog)
@@ -301,7 +317,6 @@ def get_products_for_display(product_ids: list[int]) -> str:
 def init_productDTO(row: pd.Series):
     return ProductDTO(
         Id=row[ID_COL_NAME], 
-        # SKU=row[ID_COL_NAME],
         Stock=row[STOCK_COL_NAME], 
         Status=row[STATUS_COL_NAME], 
         Title=row[TITLE_COL_NAME]
@@ -310,7 +325,7 @@ def init_productDTO(row: pd.Series):
 # https://github.com/benfred/implicit/issues/281
 def store_loss(output: StringBuilder): 
     def inner(iteration, elapsed, loss): 
-        output.append(f'Loss {loss:.5f}\n') 
+        output.append(f'Loss {loss:.6f}\n') 
 
     return inner
 
