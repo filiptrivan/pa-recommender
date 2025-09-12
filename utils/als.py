@@ -45,8 +45,8 @@ SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
 
 
 # We can not pass partial interactions because of timestamp updates
-def process_homepage_and_similar_products_recommendations(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
+def process_homepage_and_similar_products_recommendations(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame, enable_outlier_detection: bool = True, outlier_config_name: str = "ecommerce"):
+    sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products, enable_outlier_detection, outlier_config_name)
 
     model = homepage_and_similar_products_train_model(sparse_user_product_matrix)
 
@@ -72,7 +72,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
 
     # calculate_training_loss needs to be true if we want to fit_callback work
-    model = implicit.als.AlternatingLeastSquares(factors=64, regularization=0.01, alpha=15, iterations=20, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=32, regularization=0.01, alpha=1.0, iterations=25, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -197,14 +197,22 @@ def save_similar_products_recommendations(
     try:
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
-            product_for_recommendation_indexes, _ = model.similar_items(batch, filter_items=product_indexes_to_filter)
+            product_for_recommendation_indexes, similarity_scores = model.similar_items(batch, filter_items=product_indexes_to_filter)
+
             for i, product_to_recommend_index in enumerate(batch):
                 product_to_recommend_id = product_ids[product_to_recommend_index]
                 similar_products = []
-                for product_index in product_for_recommendation_indexes[i]:
+
+                for j, product_index in enumerate(product_for_recommendation_indexes[i]):
+                    similarity_score = similarity_scores[i][j]
                     product_id = product_ids[product_index]
-                    if product_id != product_to_recommend_id: # Skip itself, we don't want to show itself
+
+                    if (
+                        product_id != product_to_recommend_id and # Skip itself, we don't want to show itself
+                        similarity_score >= 0.3 # If we don't have good similar products, it's better to not even show them
+                    ): 
                         similar_products.append(product_id)
+                        
                 recommendations_dict[product_to_recommend_id] = similar_products
                 redis_pipeline.set(name=product_to_recommend_id, ex=SIMILAR_PRODUCTS_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(similar_products)) # ex=7 days
         redis_pipeline.execute()
@@ -236,8 +244,8 @@ CROSS_SELL_RECOMMENDER_REDIS = redis.Redis(
 )
 
 # We can not pass partial interactions because of timestamp updates
-def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
+def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame, enable_outlier_detection: bool = True, outlier_config_name: str = "ecommerce"):
+    sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products, enable_outlier_detection, outlier_config_name)
 
     model = cross_sell_train_model(sparse_product_product_matrix)
 
@@ -247,7 +255,7 @@ def cross_sell_train_model(sparse_user_product):
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    model = implicit.als.AlternatingLeastSquares(factors=100, regularization=0.1, alpha=1.0, iterations=15, calculate_training_loss=True) # calculate_training_loss needs to be true if we want to fit_callback work
+    model = implicit.als.AlternatingLeastSquares(factors=32, regularization=0.01, alpha=1.0, iterations=25, calculate_training_loss=True) # calculate_training_loss needs to be true if we want to fit_callback work
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
