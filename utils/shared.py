@@ -18,8 +18,8 @@ from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
 from datetime import datetime, timedelta
 import redis
-from utils.outlier_detection import comprehensive_outlier_detection, get_outlier_detection_summary
-from utils.outlier_config import get_outlier_config
+from utils.outlier_detection import outlier_detection, get_outlier_detection_summary
+from utils.outlier_config import OutlierDetectionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ EXTERNAL_API_NAMESPACE='prodavnicaalata'
 
 RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
-def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame, enable_outlier_detection: bool = True, outlier_config_name: str = "ecommerce"):
+def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
     sb = StringBuilder()
     sb.append(f'Interactions count: {len(raw_interactions)}\n')
@@ -60,20 +60,19 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     adjust_raw_data(raw_interactions, raw_products)
     
-    # Apply comprehensive outlier detection if enabled
-    if enable_outlier_detection:
-        sb.append('\n=== OUTLIER DETECTION ===\n')
-        outlier_config = get_outlier_config(outlier_config_name)
-        raw_interactions, outlier_stats = comprehensive_outlier_detection(raw_interactions, outlier_config)
-        sb.append(get_outlier_detection_summary(outlier_stats))
-        sb.append('\n')
+    sb.append('\nOutlier detection\n')
+    
+    raw_interactions, outlier_stats = outlier_detection(raw_interactions, OutlierDetectionConfig())
+    
+    sb.append(get_outlier_detection_summary(outlier_stats))
+    sb.append('\n')
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
-    # FT: Sorted by product_id
+    # Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
         [PRODUCT_COL_NAME, USER_COL_NAME],
-        observed=True # FT: Mandatory, if we don't use this, we will get a lot of data from the moment when we casted column to categorical
+        observed=True # Mandatory, if we don't use this, we will get a lot of data from the moment when we casted column to categorical
     ).agg(
         total_rating=('individual_rating', 'sum'),
         interaction_count=('individual_rating', 'count')
@@ -81,18 +80,18 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     sb.append(f'Grouped interactions of same users and products count: {len(grouped_interactions)}\n')
 
-    # Filter users with less than 3 interactions
+    # Filter users with interaction threshold
     user_interaction_counts = grouped_interactions.groupby(USER_COL_NAME, observed=True)['interaction_count'].sum()
     valid_users = user_interaction_counts[user_interaction_counts >= 3].index
     sb.append(f'Users before filtering: {len(user_interaction_counts)}\n')
-    sb.append(f'Users after filtering (>=3 interactions): {len(valid_users)}\n')
+    sb.append(f'Users after threshold filtering: {len(valid_users)}\n')
     sb.append(f'Users filtered out: {len(user_interaction_counts) - len(valid_users)}\n')
     
-    # Filter products with less than 5 interactions
+    # Filter products with interaction threshold
     product_interaction_counts = grouped_interactions.groupby(PRODUCT_COL_NAME, observed=True)['interaction_count'].sum()
     valid_products = product_interaction_counts[product_interaction_counts >= 5].index
     sb.append(f'Products before filtering: {len(product_interaction_counts)}\n')
-    sb.append(f'Products after filtering (>=5 interactions): {len(valid_products)}\n')
+    sb.append(f'Products after threshold filtering: {len(valid_products)}\n')
     sb.append(f'Products filtered out: {len(product_interaction_counts) - len(valid_products)}\n')
     
     # Apply filters to grouped_interactions
@@ -181,7 +180,7 @@ LEFT_SUFFIX = "_l"
 RIGHT_SUFFIX = "_r"
 
 
-def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame, enable_outlier_detection: bool = True, outlier_config_name: str = "ecommerce"):
+def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
     sb = StringBuilder()
     sb.append(f'Interactions count: {len(raw_interactions)}\n')
@@ -189,28 +188,26 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
 
     adjust_raw_data(raw_interactions, raw_products)
     
-    # Apply comprehensive outlier detection if enabled
-    if enable_outlier_detection:
-        sb.append('\n=== OUTLIER DETECTION ===\n')
-        outlier_config = get_outlier_config(outlier_config_name)
-        raw_interactions, outlier_stats = comprehensive_outlier_detection(raw_interactions, outlier_config)
-        sb.append(get_outlier_detection_summary(outlier_stats))
-        sb.append('\n')
+    # Outlier detection
+    sb.append('\nOutlier detection\n')
+    raw_interactions, outlier_stats = outlier_detection(raw_interactions, OutlierDetectionConfig())
+    sb.append(get_outlier_detection_summary(outlier_stats))
+    sb.append('\n')
 
     raw_interactions[TIMESTAMP_COL_NAME] = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], unit='s')
 
-    # Filter users with less than 3 interactions before creating product-product matrix
+    # Filter users with interaction threshold
     user_interaction_counts = raw_interactions.groupby(USER_COL_NAME, observed=True).size()
     valid_users = user_interaction_counts[user_interaction_counts >= 3].index
     sb.append(f'Users before filtering: {len(user_interaction_counts)}\n')
-    sb.append(f'Users after filtering (>=3 interactions): {len(valid_users)}\n')
+    sb.append(f'Users after threshold filtering: {len(valid_users)}\n')
     sb.append(f'Users filtered out: {len(user_interaction_counts) - len(valid_users)}\n')
     
-    # Filter products with less than 5 interactions
+    # Filter products with interaction threshold
     product_interaction_counts = raw_interactions.groupby(PRODUCT_COL_NAME, observed=True).size()
     valid_products = product_interaction_counts[product_interaction_counts >= 5].index
     sb.append(f'Products before filtering: {len(product_interaction_counts)}\n')
-    sb.append(f'Products after filtering (>=5 interactions): {len(valid_products)}\n')
+    sb.append(f'Products after threshold filtering: {len(valid_products)}\n')
     sb.append(f'Products filtered out: {len(product_interaction_counts) - len(valid_products)}\n')
     
     # Apply filters to raw_interactions
@@ -251,7 +248,8 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
     default_values = {STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
-    clean_sparse_interactions = bm25_weight(clean_sparse_interactions).tocsr()
+    # Don't apply BM25 weighting for cross-sell - it's not appropriate for product-product similarity
+    # clean_sparse_interactions = bm25_weight(clean_sparse_interactions).tocsr()
 
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Cross sell recommender data cleaning", sb.__str__())
@@ -390,7 +388,7 @@ def get_interactions_from_external_api():
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist', 'content_view']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=3)
+    one_year_ago = datetime.utcnow() - timedelta(days=50)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
