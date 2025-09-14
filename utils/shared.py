@@ -33,8 +33,6 @@ STOCK_COL_NAME = 'stock'
 STATUS_COL_NAME = 'status'
 TITLE_COL_NAME = 'title'
 
-# TIMESTAMP_FORMAT = "%d.%m.%Y. %H:%M:%S"
-
 INTERACTION_WEIGHTS = {
     'purchase': 1.0,
     'initiate_checkout': 0.7,
@@ -43,14 +41,21 @@ INTERACTION_WEIGHTS = {
     'content_view': 0.1
 }
 
+# Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
+INTERACTION_DECAY_SCALES = {
+    'purchase': 35,           # Purchases stay relevant longer
+    'initiate_checkout': 25,  # Checkout attempts moderately relevant
+    'add_to_cart': 20,        # Cart additions decay faster
+    'add_to_wishlist': 15,    # Wishlist items decay quickly
+    'content_view': 10        # Views decay fastest
+}
+
 EXTERNAL_API_HEADERS = {
     "Authorization": f"Bearer {Settings().BEARER_TOKEN}"
 }
 EXTERNAL_API_NAMESPACE='prodavnicaalata'
 
 #region Homepage And Similar Products Recommenders Data Manipulation
-
-RECENCY_DECAY_SCALE = 20 # FT: Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 
 def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
     now = pd.Timestamp.now()
@@ -146,11 +151,17 @@ def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.
         raise ValueError("The timestamp is in the future. Please provide a valid past timestamp.")
 
     weights = raw_interactions[INTERACTION_COL_NAME].map(INTERACTION_WEIGHTS)
+    decay_scales = raw_interactions[INTERACTION_COL_NAME].map(INTERACTION_DECAY_SCALES)
 
     if weights.isnull().any():
         raise ValueError("Interaction value doesn't exist (valid: Bought, PutInCart, PutInFavorites, Clicked).")
+    
+    if decay_scales.isnull().any():
+        raise ValueError("Interaction decay scale doesn't exist for all interaction types.")
 
-    decayed_weights = weights * np.exp(-diff_days / RECENCY_DECAY_SCALE) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+    # Apply interaction-specific decay rates
+    # Each interaction type has its own decay scale for more nuanced recency modeling
+    decayed_weights = weights * np.exp(-diff_days / decay_scales)
     return decayed_weights
 
 def bm25_weight(X, K1=1.2, B=0.75):
@@ -307,8 +318,11 @@ def get_interaction_weights(merged_interactions: pd.DataFrame) -> np.ndarray:
     days_diff = seconds_diff / 86400.0
 
     weights = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_WEIGHTS).values
+    decay_scales = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_DECAY_SCALES).values
 
-    decayed_weights = weights * np.exp(-((days_diff / RECENCY_DECAY_SCALE) ** 2)) # FT: Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+    # Apply interaction-specific decay rates for cross-sell recommendations
+    # Using linear decay (not quadratic) for consistency with homepage recommendations
+    decayed_weights = weights * np.exp(-days_diff / decay_scales)
     return decayed_weights
 
 #endregion

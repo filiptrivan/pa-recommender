@@ -61,7 +61,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
 
     # calculate_training_loss needs to be true if we want to fit_callback work
-    model = implicit.als.AlternatingLeastSquares(factors=126, regularization=0.01, alpha=2.0, iterations=15, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -325,7 +325,7 @@ def save_cross_sell_recommendations_cosine(sparse_product_product_matrix: csr_ma
 
 #region Hyperparameter Optimization
 
-def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2, max_combinations=20):
+def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2, max_combinations=30):
     """
     Test hyperparameter optimization for ALS model.
     This is for testing purposes only - not used in production training.
@@ -338,9 +338,16 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
     Returns:
         dict: Best parameters and their performance metrics
     """
-    from sklearn.model_selection import train_test_split
-    from implicit.evaluation import precision_at_k, recall_at_k
+    from implicit.evaluation import (
+        train_test_split, 
+        precision_at_k, 
+        AUC_at_k,
+        mean_average_precision_at_k,
+        ndcg_at_k,
+        ranking_metrics_at_k
+    )
     import random
+    from sklearn.model_selection import ParameterGrid
     
     now = pd.Timestamp.now()
     sb = StringBuilder()
@@ -348,34 +355,27 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
     sb.append(f"Matrix shape: {sparse_user_product_matrix.shape}\n")
     sb.append(f"Non-zero interactions: {sparse_user_product_matrix.nnz}\n")
     
-    # Split data for evaluation
-    train_matrix, test_matrix = train_test_split(sparse_user_product_matrix, test_size=test_size)
+    # Split data for evaluation using implicit.evaluation.train_test_split
+    # Convert to coo_matrix as required by implicit.evaluation.train_test_split
+    from scipy.sparse import coo_matrix
+    coo_matrix_data = coo_matrix(sparse_user_product_matrix)
+    train_matrix, test_matrix = train_test_split(coo_matrix_data, train_percentage=1-test_size, random_state=123)
     sb.append(f"Train shape: {train_matrix.shape}, Test shape: {test_matrix.shape}\n")
     
     # Define parameter grid
     param_grid = {
-        'factors': [16, 32, 64, 128],
-        'regularization': [0.001, 0.01, 0.1, 0.5],
-        'alpha': [0.5, 1.0, 2.0, 5.0],
-        'iterations': [15, 25, 50]
+        'factors': [550],
+        'regularization': [0.01],
+        'alpha': [140.0],
+        'iterations': [25]
     }
     
-    # Generate random combinations to test (to limit computation time)
-    all_combinations = []
-    for factors in param_grid['factors']:
-        for reg in param_grid['regularization']:
-            for alpha in param_grid['alpha']:
-                for iterations in param_grid['iterations']:
-                    all_combinations.append({
-                        'factors': factors,
-                        'regularization': reg,
-                        'alpha': alpha,
-                        'iterations': iterations
-                    })
+    # Generate all parameter combinations using sklearn
+    param_combinations = list(ParameterGrid(param_grid))
     
-    # Randomly sample combinations to test
-    test_combinations = random.sample(all_combinations, min(max_combinations, len(all_combinations)))
-    sb.append(f"Testing {len(test_combinations)} parameter combinations\n\n")
+    # Randomly sample combinations to test (to limit computation time)
+    test_combinations = random.sample(param_combinations, min(max_combinations, len(param_combinations)))
+    sb.append(f"Testing {len(test_combinations)} parameter combinations out of {len(param_combinations)} total\n\n")
     
     best_score = 0
     best_params = None
@@ -385,40 +385,49 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
         try:
             sb.append(f"Testing combination {i+1}/{len(test_combinations)}: {params}\n")
             
-            # Train model with current parameters
+            # Train model with current parameters and early stopping
             model = implicit.als.AlternatingLeastSquares(
                 factors=params['factors'],
                 regularization=params['regularization'],
                 alpha=params['alpha'],
                 iterations=params['iterations'],
-                calculate_training_loss=False  # Disable for faster training
+                calculate_training_loss=True  # Enable for early stopping
             )
             model.fit(train_matrix, show_progress=False)
             
-            # Evaluate model
-            precision_10 = precision_at_k(model, train_matrix, test_matrix, K=10)
-            precision_5 = precision_at_k(model, train_matrix, test_matrix, K=5)
-            recall_10 = recall_at_k(model, train_matrix, test_matrix, K=10)
+            # Evaluate model using implicit.evaluation functions
+            # All functions now require explicit parameter names as per documentation
+            precision_10 = precision_at_k(model, train_matrix, test_matrix, K=10, show_progress=False, num_threads=1)
+            precision_5 = precision_at_k(model, train_matrix, test_matrix, K=5, show_progress=False, num_threads=1)
             
-            # Calculate composite score (weighted average)
-            composite_score = 0.4 * precision_10 + 0.3 * precision_5 + 0.3 * recall_10
+            # Add additional evaluation metrics
+            auc_10 = AUC_at_k(model, train_matrix, test_matrix, K=10, show_progress=False, num_threads=1)
+            map_10 = mean_average_precision_at_k(model, train_matrix, test_matrix, K=10, show_progress=False, num_threads=1)
+            ndcg_10 = ndcg_at_k(model, train_matrix, test_matrix, K=10, show_progress=False, num_threads=1)
+            
+            # Calculate composite score using only official implicit.evaluation metrics
+            # Ben Fred's metrics are well-chosen for recommendation systems
+            composite_score = 0.3 * precision_10 + 0.25 * precision_5 + 0.2 * auc_10 + 0.15 * map_10 + 0.1 * ndcg_10
             
             result = {
                 'params': params,
                 'precision@5': precision_5,
                 'precision@10': precision_10,
-                'recall@10': recall_10,
+                'auc@10': auc_10,
+                'map@10': map_10,
+                'ndcg@10': ndcg_10,
                 'composite_score': composite_score
             }
             results.append(result)
             
-            sb.append(f"  Precision@5: {precision_5:.4f}, Precision@10: {precision_10:.4f}, Recall@10: {recall_10:.4f}\n")
+            sb.append(f"  Precision@5: {precision_5:.4f}, Precision@10: {precision_10:.4f}\n")
+            sb.append(f"  AUC@10: {auc_10:.4f}, MAP@10: {map_10:.4f}, NDCG@10: {ndcg_10:.4f}\n")
             sb.append(f"  Composite Score: {composite_score:.4f}\n")
             
             if composite_score > best_score:
                 best_score = composite_score
                 best_params = params
-                sb.append(f"  *** NEW BEST SCORE! ***\n")
+                sb.append(f"  *** BEST SCORE! ***\n")
             
         except Exception as e:
             sb.append(f"  Error with params {params}: {str(e)}\n")

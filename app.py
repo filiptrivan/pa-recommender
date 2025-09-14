@@ -72,11 +72,7 @@ def test_hyperparameter_optimization():
         sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(new_raw_interactions, new_raw_products)
         
         # Run hyperparameter optimization test
-        optimization_results = als.optimize_als_hyperparameters_test(
-            sparse_user_product_matrix, 
-            test_size=0.2, 
-            max_combinations=10  # Limit for testing
-        )
+        optimization_results = als.optimize_als_hyperparameters_test(sparse_user_product_matrix)
         
         return jsonify({
             "message": "Hyperparameter optimization test completed",
