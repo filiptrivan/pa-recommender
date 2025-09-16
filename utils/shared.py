@@ -1,7 +1,5 @@
 from functools import wraps
 import logging
-import os
-import csv
 import json
 import traceback
 import flask
@@ -9,15 +7,12 @@ from scipy.sparse import csr_matrix, coo_matrix
 from flask import jsonify, request
 import requests
 import pandas as pd
-from collections import defaultdict
 import numpy as np
-import math
 from exceptions.BusinessException import BusinessException
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
 from datetime import datetime, timedelta
-import redis
 from utils.outlier_detection import outlier_detection, get_outlier_detection_summary
 from utils.outlier_config import OutlierDetectionConfig
 
@@ -43,11 +38,11 @@ INTERACTION_WEIGHTS = {
 
 # Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
 INTERACTION_DECAY_SCALES = {
-    'purchase': 35,           # Purchases stay relevant longer
-    'initiate_checkout': 25,  # Checkout attempts moderately relevant
-    'add_to_cart': 20,        # Cart additions decay faster
-    'add_to_wishlist': 15,    # Wishlist items decay quickly
-    'content_view': 10        # Views decay fastest
+    'purchase': 30,           # Purchases stay relevant longer
+    'initiate_checkout': 20,  # Checkout attempts moderately relevant
+    'add_to_cart': 15,        # Cart additions decay faster
+    'add_to_wishlist': 10,    # Wishlist items decay quickly
+    'content_view': 5         # Views decay fastest
 }
 
 EXTERNAL_API_HEADERS = {
@@ -74,6 +69,10 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
+    log_top_10_products(raw_interactions, sb, now)
+
+    sb.append(email_product_interaction_histogram_html(raw_interactions))
+
     # Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
         [PRODUCT_COL_NAME, USER_COL_NAME],
@@ -87,17 +86,13 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     # Filter users with interaction threshold
     user_interaction_counts = grouped_interactions.groupby(USER_COL_NAME, observed=True)['interaction_count'].sum()
-    valid_users = user_interaction_counts[user_interaction_counts >= 3].index
-    sb.append(f'Users before filtering: {len(user_interaction_counts)}\n')
-    sb.append(f'Users after threshold filtering: {len(valid_users)}\n')
-    sb.append(f'Users filtered out: {len(user_interaction_counts) - len(valid_users)}\n')
+    valid_users = user_interaction_counts[user_interaction_counts >= 2].index
+    sb.append(f'Users: {len(user_interaction_counts)} total; {len(valid_users)} after filtering; {len(user_interaction_counts) - len(valid_users)} filtered out\n')
     
     # Filter products with interaction threshold
     product_interaction_counts = grouped_interactions.groupby(PRODUCT_COL_NAME, observed=True)['interaction_count'].sum()
-    valid_products = product_interaction_counts[product_interaction_counts >= 5].index
-    sb.append(f'Products before filtering: {len(product_interaction_counts)}\n')
-    sb.append(f'Products after threshold filtering: {len(valid_products)}\n')
-    sb.append(f'Products filtered out: {len(product_interaction_counts) - len(valid_products)}\n')
+    valid_products = product_interaction_counts[product_interaction_counts >= 4].index
+    sb.append(f'Products: {len(product_interaction_counts)} total; {len(valid_products)} after filtering; {len(product_interaction_counts) - len(valid_products)} filtered out\n')
     
     # Apply filters to grouped_interactions
     filtered_interactions = grouped_interactions[
@@ -135,8 +130,6 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     default_values = { STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
-    clean_sparse_interactions = bm25_weight(clean_sparse_interactions).tocsr()
-
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Homepage and similar products recommender data cleaning", sb.__str__())
 
@@ -164,7 +157,7 @@ def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.
     decayed_weights = weights * np.exp(-diff_days / decay_scales)
     return decayed_weights
 
-def bm25_weight(X, K1=1.2, B=0.75):
+def bm25_weight(X, K1=2.0, B=0.25):
     """BM25 weighting for sparse user-item matrix"""
     X = coo_matrix(X, copy=True)
     
@@ -178,6 +171,110 @@ def bm25_weight(X, K1=1.2, B=0.75):
     
     X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.col] + X.data) * idf[X.col]
     return X.tocsr()
+
+#endregion
+
+#region Exploratory HTML reports
+
+def email_product_interaction_histogram_html(
+    raw_interactions: pd.DataFrame,
+    bins: int = 50,
+    by_action: str | list[str] | None = None,
+    subject_prefix: str = "Product interaction histogram"
+) -> None:
+    """Compute interactions-per-product distribution and email an HTML report with inline SVG histogram.
+
+    Uses the standard logging email channel. No files are written.
+    """
+    # Filter by action if requested
+    if by_action is not None:
+        if isinstance(by_action, str):
+            mask = raw_interactions[INTERACTION_COL_NAME] == by_action
+            title_suffix = f" (action={by_action})"
+        else:
+            mask = raw_interactions[INTERACTION_COL_NAME].isin(by_action)
+            title_suffix = f" (actions={','.join(map(str, by_action))})"
+        data = raw_interactions.loc[mask]
+    else:
+        data = raw_interactions
+        title_suffix = ""
+
+    if data.empty:
+        raise BusinessException("No interactions available for plotting after filtering.")
+
+    counts_per_product = data.groupby(PRODUCT_COL_NAME, observed=True).size()
+    if counts_per_product.empty:
+        raise BusinessException("Grouping produced no data; verify input columns and types.")
+
+    counts = counts_per_product.values.astype(float)
+    hist, bin_edges = np.histogram(counts, bins=bins)
+
+    # Basic stats
+    num_products = int(len(counts))
+    mean_c = float(np.mean(counts))
+    median_c = float(np.median(counts))
+    max_c = int(np.max(counts))
+
+    # Build simple inline SVG histogram
+    width, height = 800, 320
+    margin_left, margin_right, margin_top, margin_bottom = 50, 20, 20, 40
+    plot_w = width - margin_left - margin_right
+    plot_h = height - margin_top - margin_bottom
+
+    max_y = max(1, int(hist.max()))
+    num_bins = len(hist)
+    bar_w = plot_w / max(1, num_bins)
+
+    # Y-axis ticks (0, max)
+    svg_bars = []
+    for i, y in enumerate(hist):
+        bar_height = 0 if max_y == 0 else (y / max_y) * plot_h
+        x = margin_left + i * bar_w
+        y_top = margin_top + (plot_h - bar_height)
+        svg_bars.append(
+            f'<rect x="{x:.2f}" y="{y_top:.2f}" width="{bar_w - 1:.2f}" height="{bar_height:.2f}" fill="#4e79a7" />'
+        )
+
+    # Axes
+    x_axis = f'<line x1="{margin_left}" y1="{margin_top + plot_h}" x2="{margin_left + plot_w}" y2="{margin_top + plot_h}" stroke="#333" stroke-width="1" />'
+    y_axis = f'<line x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" y2="{margin_top + plot_h}" stroke="#333" stroke-width="1" />'
+
+    # Y tick labels (0 and max)
+    y0_label = f'<text x="{margin_left - 10}" y="{margin_top + plot_h}" text-anchor="end" font-size="10" fill="#333">0</text>'
+    ymax_label = f'<text x="{margin_left - 10}" y="{margin_top + 10}" text-anchor="end" font-size="10" fill="#333">{max_y}</text>'
+
+    # Title and axis labels
+    title = f'Distribution of interactions per product{title_suffix}'
+    title_svg = f'<text x="{width/2}" y="{margin_top - 5}" text-anchor="middle" font-size="14" fill="#111">{title}</text>'
+    x_label = 'Interactions per product (binned)'
+    y_label = 'Number of products'
+    x_label_svg = f'<text x="{margin_left + plot_w/2}" y="{height - 5}" text-anchor="middle" font-size="12" fill="#333">{x_label}</text>'
+    y_label_svg = f'<text transform="translate(15,{margin_top + plot_h/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#333">{y_label}</text>'
+
+    svg = (
+        f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">'
+        f'{title_svg}'
+        f'{x_axis}{y_axis}'
+        f"{''.join(svg_bars)}"
+        f'{y0_label}{ymax_label}'
+        f'{x_label_svg}{y_label_svg}'
+        f'</svg>'
+    )
+
+    # Build HTML body
+    html_stats = (
+        f"<p><strong>Products:</strong> {num_products} | "
+        f"<strong>Mean:</strong> {mean_c:.2f} | "
+        f"<strong>Median:</strong> {median_c:.2f} | "
+        f"<strong>Max:</strong> {max_c}</p>"
+    )
+    html = f"""
+<h3>{title}</h3>
+{html_stats}
+{svg}
+"""
+
+    return html
 
 #endregion
 
@@ -402,7 +499,7 @@ def get_interactions_from_external_api():
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist', 'content_view']
 
-    one_year_ago = datetime.utcnow() - timedelta(days=50)
+    one_year_ago = datetime.utcnow() - timedelta(days=10)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
@@ -549,5 +646,48 @@ def get_products_from_external_api():
     Emailing().send_email_and_log_info("Getting products from CB API", sb.__str__())
 
     return filtered_products
+
+# This method doesn't handle stock==0 filtering, this is not the same data as in top_10_products_to_recommend, it's just made for intuitive purposes
+def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBuilder, now: pd.Timestamp):
+    # Log Top 10 products by total rating with interaction breakdown
+    try:
+        product_totals = (
+            raw_interactions
+                .groupby(PRODUCT_COL_NAME, observed=True)['individual_rating']
+                .sum()
+                .sort_values(ascending=False)
+        )
+
+        top_products = product_totals.head(10)
+
+        if not top_products.empty:
+            processingLog.append('\nTop products by total rating (with interaction breakdown):\n')
+            for product_id, total in top_products.items():
+                processingLog.append(f"\nProduct {int(product_id)} | total_rating={total:.6f}\n")
+
+                product_rows = raw_interactions[raw_interactions[PRODUCT_COL_NAME] == product_id].copy()
+
+                # Compute helpful explainer columns (without mutating original dtypes irreversibly)
+                timestamps_dt = pd.to_datetime(product_rows[TIMESTAMP_COL_NAME], unit='s')
+                days_ago = (now - timestamps_dt) / np.timedelta64(1, 'D')
+                base_weight = product_rows[INTERACTION_COL_NAME].map(INTERACTION_WEIGHTS)
+                decay_scale = product_rows[INTERACTION_COL_NAME].map(INTERACTION_DECAY_SCALES)
+                decayed = product_rows['individual_rating']
+
+                # Sort newest first for readability
+                order = timestamps_dt.sort_values(ascending=False).index
+                for idx in order:
+                    uid = product_rows.at[idx, USER_COL_NAME]
+                    action = product_rows.at[idx, INTERACTION_COL_NAME]
+                    created_unix = product_rows.at[idx, TIMESTAMP_COL_NAME]
+                    created_iso = pd.to_datetime(created_unix, unit='s').isoformat()
+                    processingLog.append(
+                        f"  - user={uid}, action={action}, created={created_iso}, "
+                        f"base_weight={base_weight.at[idx]:.3f}, days_ago={days_ago.at[idx]:.2f}, "
+                        f"decay_scale={decay_scale.at[idx]:.2f}, decayed_rating={decayed.at[idx]:.6f}\n"
+                    )
+    except Exception as ex:
+        # Do not fail on logging issues
+        processingLog.append(f"Failed building top-products interaction log: {ex}\n")
 
 #endregion

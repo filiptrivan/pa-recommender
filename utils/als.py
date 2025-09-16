@@ -61,7 +61,8 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
 
     # calculate_training_loss needs to be true if we want to fit_callback work
-    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
+    # model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=1.0, iterations=15, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -100,8 +101,8 @@ def save_homepage_recommendations(
 
     recommendations_dict = defaultdict(list)
 
-    recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY] = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
-    processingLog.append(f"Top ten overall recommendations: {get_products_for_display(recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY])}\n")
+    recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY], titles = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
+    processingLog.append(f"Top ten overall recommendations: {get_products_for_display(titles)}\n")
 
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
@@ -139,31 +140,30 @@ def save_homepage_recommendations(
 
     return recommendations_dict
 
-def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, products: pd.DataFrame, product_indexes_to_filter: pd.Index) -> list[dict]:
-    result: list[int] = []
-
+def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, products: pd.DataFrame, product_indexes_to_filter: list[int]) -> tuple[list[int], list[str]]:
     # Because we are not modifying product_ratings ravel is faster then flatten
-    product_ratings = np.array(sparse_user_product_matrix.sum(axis=0)).ravel()
+    product_ratings = np.asarray(sparse_user_product_matrix.sum(axis=0)).ravel()
 
-    rated_product_counts = sparse_user_product_matrix.getnnz(axis=0)
+    # Drop by position
+    mask = np.ones(len(products), dtype=bool)
+    mask[product_indexes_to_filter] = False
 
-    avg_interactions = np.where(
-        rated_product_counts == 0,
-        0.0,
-        product_ratings / rated_product_counts
-    )
+    valid_products = products[mask].reset_index(drop=True)
+    valid_product_ratings = product_ratings[mask]
 
-    valid_products = products.drop(product_indexes_to_filter).reset_index(drop=True)
-    valid_avg_interactions = np.delete(avg_interactions, product_indexes_to_filter)
+    # Top 10
+    top_indices = np.argsort(valid_product_ratings)[-10:][::-1]
+    top_products = valid_products.iloc[top_indices]
 
-    top_10_valid_indices = np.argsort(valid_avg_interactions)[-10:][::-1]
-    top_10_products = valid_products.iloc[top_10_valid_indices]
+    ids = []
+    titles = []
 
-    for _, product in top_10_products.iterrows():
+    for i, (_, product) in enumerate(top_products.iterrows()):
         productDTO = init_productDTO(product)
-        result.append(productDTO.Id)
+        ids.append(productDTO.Id)
+        titles.append(f'\n{productDTO.Title} (score: {valid_product_ratings[top_indices[i]]})')
 
-    return result
+    return ids, titles
 
 #endregion
 
