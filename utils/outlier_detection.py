@@ -21,12 +21,7 @@ def outlier_detection(interactions: pd.DataFrame, config: OutlierDetectionConfig
     Returns:
         Tuple of (filtered_interactions, comprehensive_outlier_stats)
     """
-    sb = StringBuilder()
     original_count = len(interactions)
-    sb.append("OUTLIER DETECTION\n")
-    sb.append(f"Original interactions: {original_count}\n")
-    
-    sb.append("Using standard processing\n\n")
     
     comprehensive_stats = {
         'original_count': original_count,
@@ -38,41 +33,26 @@ def outlier_detection(interactions: pd.DataFrame, config: OutlierDetectionConfig
     }
     
     # Step 1: User-level outlier detection
-    sb.append("1. USER-LEVEL OUTLIER DETECTION\n")
     interactions, user_outlier_stats = detect_user_outliers(interactions, config)
     comprehensive_stats['user_outliers'] = user_outlier_stats
-    sb.append(f"After user outlier removal: {len(interactions)} interactions\n\n")
     
     # Final statistics
     comprehensive_stats['final_count'] = len(interactions)
     comprehensive_stats['total_removed'] = original_count - len(interactions)
-    
-    sb.append("=== OUTLIER DETECTION SUMMARY ===\n")
-    sb.append(f"Original interactions: {original_count}\n")
-    sb.append(f"Final interactions: {len(interactions)}\n")
-    sb.append(f"Total removed: {comprehensive_stats['total_removed']}\n")
-    sb.append(f"Removal rate: {comprehensive_stats['total_removed']/original_count*100:.2f}%\n")
     
     return interactions, comprehensive_stats
 
 def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionConfig) -> Tuple[pd.DataFrame, Dict]:
     """
     Detect user-level outliers based on interaction patterns, timing, and behavior.
-    Optimized for big data with vectorized operations and optional parallel processing.
     
     Args:
         interactions: DataFrame with columns [user_uid, product_id, action, created]
         config: OutlierDetectionConfig instance
-        use_parallel: Whether to use parallel processing for user analysis
-        n_jobs: Number of parallel jobs (None for auto-detection)
         
     Returns:
         Tuple of (filtered_interactions, outlier_stats)
     """
-    sb = StringBuilder()
-    original_count = len(interactions)
-    sb.append(f"Original interactions: {original_count}\n")
-    
     # Convert timestamp to datetime
     interactions = interactions.copy()
     interactions['created_dt'] = pd.to_datetime(interactions['created'], unit='s')
@@ -80,6 +60,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     
     outlier_stats = {
         'high_frequency_users': 0,
+        'high_frequency_users_details': '',
         'total_outlier_users': 0
     }
     
@@ -89,15 +70,14 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     ]['user_uid'].unique()
     
     outlier_stats['high_frequency_users'] = len(high_freq_users)
-    sb.append(f"High frequency users (>={config.max_user_interactions_per_day} interactions/day): {len(high_freq_users)}\n")
-    
+    if len(high_freq_users) > 0:
+        outlier_stats['high_frequency_users_details'] = get_top_10_high_freq_users_details(interactions, high_freq_users, user_daily_counts, config.max_user_interactions_per_day)
+
     # Combine all outlier users
     all_outlier_users = set(high_freq_users)
     
-    # Update outlier stats with correct counts
     # Note: Users can appear in multiple categories, so individual counts may not sum to total
     outlier_stats['total_outlier_users'] = len(all_outlier_users)
-    sb.append(f"Total outlier users: {len(all_outlier_users)}\n")
     
     # Filter out outlier users
     outlier_mask = interactions['user_uid'].isin(all_outlier_users)
@@ -108,7 +88,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     
     return filtered_interactions, outlier_stats
 
-def get_outlier_detection_summary(stats: Dict) -> str:
+def get_outlier_detection_summary(stats: Dict, config: OutlierDetectionConfig) -> str:
     """Generate a human-readable summary of outlier detection results."""
     summary = []
     summary.append("Outlier Detection Summary:")
@@ -116,12 +96,71 @@ def get_outlier_detection_summary(stats: Dict) -> str:
     summary.append(f"  Final interactions: {stats['final_count']:,}")
     summary.append(f"  Total removed: {stats['total_removed']:,}")
     summary.append(f"  Removal rate: {stats['total_removed']/stats['original_count']*100:.2f}%")
-    
+
     if 'user_outliers' in stats:
         user_stats = stats['user_outliers']
         summary.append("\nUser-level outliers:")
-        summary.append(f"  High frequency users: {user_stats.get('high_frequency_users', 0)}")
+        high_freq_users = user_stats.get('high_frequency_users', 0)
+        summary.append(f"  High frequency users (>={config.max_user_interactions_per_day} interactions/day): {high_freq_users}")
+        summary.append(user_stats['high_frequency_users_details'])
         summary.append(f"  Total outlier users: {user_stats.get('total_outlier_users', 0)}")
         summary.append("  (Note: Users can appear in multiple categories, so individual counts may not sum to total)")
     
     return "\n".join(summary)
+
+def get_top_10_high_freq_users_details(interactions: pd.DataFrame, high_freq_users: pd.Index, user_daily_counts: pd.DataFrame, max_interactions_per_day: int):
+    """
+    Get the top 10 users that are filtered out due to high interaction frequency,
+    along with their last 20 interactions including action type and time.
+    This adds the information to the existing StringBuilder instead of sending a separate email.
+    
+    Args:
+        interactions: DataFrame with interaction data
+        high_freq_users: Index of users with high frequency interactions
+        user_daily_counts: DataFrame with daily interaction counts per user
+        max_interactions_per_day: Maximum allowed interactions per day
+        sb: StringBuilder to append the logging information to
+    """
+    try:
+        # Get the top 10 users by maximum daily interactions
+        user_max_daily_counts = user_daily_counts.groupby('user_uid')['daily_interactions'].max().reset_index()
+        top_10_users = user_max_daily_counts.nlargest(10, 'daily_interactions')
+        
+        if top_10_users.empty:
+            return
+        
+        sb = StringBuilder()
+
+        sb.append(f"\n=== TOP 10 FILTERED USERS (>={max_interactions_per_day} interactions/day) ===\n")
+        sb.append(f"Total high frequency users found: {len(high_freq_users)}\n")
+        sb.append(f"Showing top 10 by maximum daily interactions:\n\n")
+        
+        for idx, row in top_10_users.iterrows():
+            user_uid = row['user_uid']
+            max_daily_interactions = row['daily_interactions']
+            
+            sb.append(f"User: {user_uid} | Max daily interactions: {max_daily_interactions}\n")
+            
+            # Get last 20 interactions for this user, sorted by timestamp (newest first)
+            user_interactions = interactions[interactions['user_uid'] == user_uid].copy()
+            user_interactions = user_interactions.sort_values('created', ascending=False).head(20)
+            
+            if not user_interactions.empty:
+                sb.append("Last 20 interactions:\n")
+                for _, interaction in user_interactions.iterrows():
+                    action = interaction['action']
+                    product_id = interaction['product_id']
+                    created_timestamp = interaction['created']
+                    created_dt = pd.to_datetime(created_timestamp, unit='s')
+                    created_iso = created_dt.isoformat()
+                    
+                    sb.append(f"  - Action: {action}, Product: {product_id}, Time: {created_iso}\n")
+            else:
+                sb.append("  No interactions found for this user.\n")
+            
+            sb.append("\n" + "-" * 80 + "\n\n")
+
+        return sb.__str__()
+    
+    except Exception as ex: # Don't fail the main process if logging fails
+        return f"Failed to log top 10 filtered users: {ex}\n"

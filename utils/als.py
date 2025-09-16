@@ -62,7 +62,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
 
     # calculate_training_loss needs to be true if we want to fit_callback work
     # model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
-    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=1.0, iterations=15, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=2.0, iterations=15, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -364,9 +364,9 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
     
     # Define parameter grid
     param_grid = {
-        'factors': [550],
+        'factors': [450, 550],
         'regularization': [0.01],
-        'alpha': [140.0],
+        'alpha': [130.0, 140.0],
         'iterations': [25]
     }
     

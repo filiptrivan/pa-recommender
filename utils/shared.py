@@ -12,6 +12,10 @@ from exceptions.BusinessException import BusinessException
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
+import io
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from utils.outlier_detection import outlier_detection, get_outlier_detection_summary
 from utils.outlier_config import OutlierDetectionConfig
@@ -62,16 +66,14 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     
     sb.append('\nOutlier detection\n')
     
-    raw_interactions, outlier_stats = outlier_detection(raw_interactions, OutlierDetectionConfig())
-    
-    sb.append(get_outlier_detection_summary(outlier_stats))
+    outlierConfig = OutlierDetectionConfig()
+    raw_interactions, outlier_stats = outlier_detection(raw_interactions, outlierConfig)
+    sb.append(get_outlier_detection_summary(outlier_stats, outlierConfig))
     sb.append('\n')
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
     log_top_10_products(raw_interactions, sb, now)
-
-    sb.append(email_product_interaction_histogram_html(raw_interactions))
 
     # Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
@@ -130,8 +132,21 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     default_values = { STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
+    # Build and attach PNG histogram image for email
+    try:
+        png_bytes = build_product_interaction_histogram_png(raw_interactions)
+        attachments = [("product_interactions_hist.png", png_bytes, "image/png")]
+    except Exception as ex:
+        attachments = None
+        sb.append(f"Failed to build histogram PNG: {ex}\n")
+
     sb.append(get_duration_message(now))
-    Emailing().send_email_and_log_info("Homepage and similar products recommender data cleaning", sb.__str__())
+    Emailing().send_email_and_log_info(
+        "Homepage and similar products recommender data cleaning",
+        sb.__str__(),
+        attachments=attachments,
+        html=False
+    )
 
     return clean_sparse_interactions, user_ids.astype(str), products
 
@@ -171,110 +186,6 @@ def bm25_weight(X, K1=2.0, B=0.25):
     
     X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.col] + X.data) * idf[X.col]
     return X.tocsr()
-
-#endregion
-
-#region Exploratory HTML reports
-
-def email_product_interaction_histogram_html(
-    raw_interactions: pd.DataFrame,
-    bins: int = 50,
-    by_action: str | list[str] | None = None,
-    subject_prefix: str = "Product interaction histogram"
-) -> None:
-    """Compute interactions-per-product distribution and email an HTML report with inline SVG histogram.
-
-    Uses the standard logging email channel. No files are written.
-    """
-    # Filter by action if requested
-    if by_action is not None:
-        if isinstance(by_action, str):
-            mask = raw_interactions[INTERACTION_COL_NAME] == by_action
-            title_suffix = f" (action={by_action})"
-        else:
-            mask = raw_interactions[INTERACTION_COL_NAME].isin(by_action)
-            title_suffix = f" (actions={','.join(map(str, by_action))})"
-        data = raw_interactions.loc[mask]
-    else:
-        data = raw_interactions
-        title_suffix = ""
-
-    if data.empty:
-        raise BusinessException("No interactions available for plotting after filtering.")
-
-    counts_per_product = data.groupby(PRODUCT_COL_NAME, observed=True).size()
-    if counts_per_product.empty:
-        raise BusinessException("Grouping produced no data; verify input columns and types.")
-
-    counts = counts_per_product.values.astype(float)
-    hist, bin_edges = np.histogram(counts, bins=bins)
-
-    # Basic stats
-    num_products = int(len(counts))
-    mean_c = float(np.mean(counts))
-    median_c = float(np.median(counts))
-    max_c = int(np.max(counts))
-
-    # Build simple inline SVG histogram
-    width, height = 800, 320
-    margin_left, margin_right, margin_top, margin_bottom = 50, 20, 20, 40
-    plot_w = width - margin_left - margin_right
-    plot_h = height - margin_top - margin_bottom
-
-    max_y = max(1, int(hist.max()))
-    num_bins = len(hist)
-    bar_w = plot_w / max(1, num_bins)
-
-    # Y-axis ticks (0, max)
-    svg_bars = []
-    for i, y in enumerate(hist):
-        bar_height = 0 if max_y == 0 else (y / max_y) * plot_h
-        x = margin_left + i * bar_w
-        y_top = margin_top + (plot_h - bar_height)
-        svg_bars.append(
-            f'<rect x="{x:.2f}" y="{y_top:.2f}" width="{bar_w - 1:.2f}" height="{bar_height:.2f}" fill="#4e79a7" />'
-        )
-
-    # Axes
-    x_axis = f'<line x1="{margin_left}" y1="{margin_top + plot_h}" x2="{margin_left + plot_w}" y2="{margin_top + plot_h}" stroke="#333" stroke-width="1" />'
-    y_axis = f'<line x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" y2="{margin_top + plot_h}" stroke="#333" stroke-width="1" />'
-
-    # Y tick labels (0 and max)
-    y0_label = f'<text x="{margin_left - 10}" y="{margin_top + plot_h}" text-anchor="end" font-size="10" fill="#333">0</text>'
-    ymax_label = f'<text x="{margin_left - 10}" y="{margin_top + 10}" text-anchor="end" font-size="10" fill="#333">{max_y}</text>'
-
-    # Title and axis labels
-    title = f'Distribution of interactions per product{title_suffix}'
-    title_svg = f'<text x="{width/2}" y="{margin_top - 5}" text-anchor="middle" font-size="14" fill="#111">{title}</text>'
-    x_label = 'Interactions per product (binned)'
-    y_label = 'Number of products'
-    x_label_svg = f'<text x="{margin_left + plot_w/2}" y="{height - 5}" text-anchor="middle" font-size="12" fill="#333">{x_label}</text>'
-    y_label_svg = f'<text transform="translate(15,{margin_top + plot_h/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#333">{y_label}</text>'
-
-    svg = (
-        f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">'
-        f'{title_svg}'
-        f'{x_axis}{y_axis}'
-        f"{''.join(svg_bars)}"
-        f'{y0_label}{ymax_label}'
-        f'{x_label_svg}{y_label_svg}'
-        f'</svg>'
-    )
-
-    # Build HTML body
-    html_stats = (
-        f"<p><strong>Products:</strong> {num_products} | "
-        f"<strong>Mean:</strong> {mean_c:.2f} | "
-        f"<strong>Median:</strong> {median_c:.2f} | "
-        f"<strong>Max:</strong> {max_c}</p>"
-    )
-    html = f"""
-<h3>{title}</h3>
-{html_stats}
-{svg}
-"""
-
-    return html
 
 #endregion
 
@@ -675,7 +586,7 @@ def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBui
                 decayed = product_rows['individual_rating']
 
                 # Sort newest first for readability
-                order = timestamps_dt.sort_values(ascending=False).index
+                order = timestamps_dt.sort_values(ascending=False).index[:5]
                 for idx in order:
                     uid = product_rows.at[idx, USER_COL_NAME]
                     action = product_rows.at[idx, INTERACTION_COL_NAME]
@@ -689,5 +600,45 @@ def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBui
     except Exception as ex:
         # Do not fail on logging issues
         processingLog.append(f"Failed building top-products interaction log: {ex}\n")
+
+#endregion
+
+#region Visualization helpers
+
+def build_product_interaction_histogram_png(
+    raw_interactions: pd.DataFrame,
+    bins: int = 50,
+    by_action: str | list[str] | None = None
+) -> bytes:
+    if by_action is not None:
+        if isinstance(by_action, str):
+            mask = raw_interactions[INTERACTION_COL_NAME] == by_action
+        else:
+            mask = raw_interactions[INTERACTION_COL_NAME].isin(by_action)
+        data = raw_interactions.loc[mask]
+    else:
+        data = raw_interactions
+
+    if data.empty:
+        raise BusinessException("No interactions available for plotting after filtering.")
+
+    counts_per_product = data.groupby(PRODUCT_COL_NAME, observed=True).size()
+    if counts_per_product.empty:
+        raise BusinessException("Grouping produced no data; verify input columns and types.")
+
+    counts = counts_per_product.values.astype(float)
+
+    fig, ax = plt.subplots(figsize=(8, 3.2), dpi=100)
+    ax.hist(counts, bins=bins, color="#4e79a7")
+    ax.set_xlabel("Interactions per product")
+    ax.set_ylabel("Number of products")
+    ax.set_title("Distribution of interactions per product")
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
 #endregion
