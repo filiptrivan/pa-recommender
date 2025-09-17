@@ -7,4 +7,4 @@ This module provides different configuration presets for various use cases and e
 class OutlierDetectionConfig:
     def __init__(self):
         # User-level outlier detection
-        self.max_user_interactions_per_day = 1000  # Flag users with >1000 interactions/day     
+        self.max_user_interactions_per_day = 200  # Flag users with >200 interactions/day     

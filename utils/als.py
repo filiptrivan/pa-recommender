@@ -30,7 +30,7 @@ HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
     password=Settings().REDIS_PASSWORD
 )
 
-TOP_TEN_OVERALL_RECOMMENDATIONS_KEY = 'top_ten_overall_recommendations'
+TOP_OVERALL_RECOMMENDATIONS_KEY = 'top_overall_recommendations'
 HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
 
 # We can not pass partial interactions because of timestamp updates
@@ -62,7 +62,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
 
     # calculate_training_loss needs to be true if we want to fit_callback work
     # model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
-    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=2.0, iterations=15, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=2.0, iterations=25, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -101,8 +101,8 @@ def save_homepage_recommendations(
 
     recommendations_dict = defaultdict(list)
 
-    recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY], titles = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
-    processingLog.append(f"Top ten overall recommendations: {get_products_for_display(titles)}\n")
+    recommendations_dict[TOP_OVERALL_RECOMMENDATIONS_KEY], titles = get_top_overall_recommendations(sparse_user_product_matrix, products, product_indexes_to_filter)
+    processingLog.append(f"Top overall recommendations: {get_products_for_display(titles)}\n")
 
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
@@ -110,11 +110,10 @@ def save_homepage_recommendations(
     redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
 
     try:
-        redis_pipeline.set(name=TOP_TEN_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_TEN_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
+        redis_pipeline.set(name=TOP_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
-            product_indexes, _ = model.recommend(batch, sparse_user_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
-            # TODO: Check if, after the real training, there are products which should be filtered
+            product_indexes, _ = model.recommend(userid=batch, user_items=sparse_user_product_matrix[batch], N=18, filter_already_liked_items=False, filter_items=product_indexes_to_filter)
             for i, user_index in enumerate(batch):
                 user_id = user_ids[user_index] # Not casting here improved performance for 10 sec for 500k interactions
                 products_for_recommendation = []
@@ -151,8 +150,8 @@ def get_top_overall_recommendations(sparse_user_product_matrix: csr_matrix, prod
     valid_products = products[mask].reset_index(drop=True)
     valid_product_ratings = product_ratings[mask]
 
-    # Top 10
-    top_indices = np.argsort(valid_product_ratings)[-10:][::-1]
+    # Top 18
+    top_indices = np.argsort(valid_product_ratings)[-18:][::-1]
     top_products = valid_products.iloc[top_indices]
 
     ids = []

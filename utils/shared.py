@@ -14,6 +14,7 @@ from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
 import io
 import time
+import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -412,10 +413,29 @@ def get_interactions_from_external_api():
     # Keep independent pagination state per event to avoid redundant calls once an event is exhausted
     event_state = {event: {"offset": 0, "done": False} for event in events}
 
-    one_year_ago = datetime.utcnow() - timedelta(days=60)
+    one_year_ago = datetime.utcnow() - timedelta(days=100)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
-    all_activities = []  # Will hold dicts from each batch
+    data_dir = '../data'
+    cache_path = os.path.join(data_dir, 'filtered_interactions.csv')
+
+    # Load existing filtered interactions from cache
+    existing_interactions = pd.DataFrame()
+    try:
+        existing_interactions = pd.read_csv(cache_path)
+        if not existing_interactions.empty:
+            # Keep only last year
+            existing_interactions = existing_interactions.loc[existing_interactions['created'] >= one_year_ago_unix_timestamp]
+            last_activity_date = int(existing_interactions['created'].max()) if not existing_interactions.empty else one_year_ago_unix_timestamp
+            sb.append(f"Loaded {len(existing_interactions)} existing filtered interactions from cache.\n")
+        else:
+            last_activity_date = one_year_ago_unix_timestamp
+    except Exception as ex:
+        sb.append(f"Failed reading cache: {ex}\n")
+        last_activity_date = one_year_ago_unix_timestamp
+
+    # Fetch new data
+    new_filtered_interactions = []
 
     # Continue until every event is marked done
     while any(not s["done"] for s in event_state.values()):
@@ -431,42 +451,73 @@ def get_interactions_from_external_api():
 
             url = (
                 f"{base_url}"
-                f"&date_filter_from={one_year_ago_unix_timestamp}"
+                f"&date_filter_from={last_activity_date}"
                 f"&event={event}"
                 f"&limit={start},{limit_range}"
             )
 
             response = requests.get(url, headers=EXTERNAL_API_HEADERS)
-
             if response.status_code != 200:
-                raise BusinessException(f"External CB request failed: {response}.\n")
+                raise BusinessException(f"External CB request failed: {response.status_code} {response.text}.\n")
 
             json_payload = response.json()
             data_section = json_payload.get("data", {})
             batch_activities = data_section.get("activities", []) if data_section else []
 
-            if batch_activities == []:
-                # No more data for this event; mark as done
-                state["done"] = True
+            if not batch_activities:
+                state["done"] = True # No more data for this event; mark as done
                 continue
 
-            all_activities.extend(batch_activities)
-            state["offset"] = end
-            # Tiny delay to avoid hammering the API
-            time.sleep(0.1)
+            df_batch = pd.DataFrame(batch_activities)
+            batch_filtered = get_filtered_interactions(df_batch)
+            
+            if not batch_filtered.empty:
+                new_filtered_interactions.append(batch_filtered)
 
-    if not all_activities:
+            state["offset"] = end
+            time.sleep(0.05) # Tiny delay to avoid hammering the API
+
+    # Combine existing and new filtered interactions
+    all_filtered_interactions = existing_interactions.copy()
+    
+    if new_filtered_interactions:
+        new_df = pd.concat(new_filtered_interactions, ignore_index=True)
+        all_filtered_interactions = pd.concat([all_filtered_interactions, new_df], ignore_index=True)
+
+        # Drop duplicates
+        count_before_duplicates = len(all_filtered_interactions)
+        all_filtered_interactions = all_filtered_interactions.drop_duplicates(subset='id').reset_index(drop=True)
+        count_after_duplicates = len(all_filtered_interactions)
+        sb.append(f'Dropped {count_before_duplicates - count_after_duplicates} duplicates.\n')
+
+    if all_filtered_interactions.empty:
         raise BusinessException("Interactions are required.")
 
-    new_raw_interactions = pd.DataFrame(all_activities)
+    # Save cache
+    os.makedirs(data_dir, exist_ok=True)
+    all_filtered_interactions.to_csv(cache_path, index=False)
+    sb.append(f"Cache updated with {len(all_filtered_interactions)} filtered interactions.\n")
 
-    dict_info_mask = (new_raw_interactions["info"].map(type) == dict) & \
-        (new_raw_interactions["info"].map(len) > 0)
+    sb.append(get_duration_message(now))
+    Emailing().send_email_and_log_info("Getting interactions from CB API", sb.__str__())
+
+    return all_filtered_interactions
+
+def get_filtered_interactions(activities_df):
+    """Process raw activities into filtered interactions"""
+    if activities_df.empty:
+        return pd.DataFrame()
+    
+    dict_info_mask = (
+        activities_df["info"].notna() &
+        (activities_df["info"].map(type) == dict) & 
+        (activities_df["info"] != {}) 
+    )
 
     filtered_interactions = (
-        new_raw_interactions
-        .loc[dict_info_mask, ['action', USER_COL_NAME, 'info', 'created']]
-        .dropna(subset=[USER_COL_NAME, 'info'])
+        activities_df
+        .loc[dict_info_mask, ['id', 'action', USER_COL_NAME, 'info', 'created']]
+        .dropna(subset=[USER_COL_NAME])
         .copy()
     )
 
@@ -487,19 +538,26 @@ def get_interactions_from_external_api():
 
     filtered_interactions = filtered_interactions.drop(columns=['info'])
 
-    sb.append(get_duration_message(now))
-    Emailing().send_email_and_log_info("Getting interactions from CB API", sb.__str__())
-
     return filtered_interactions
 
 def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: str):
+    if interactions is None or interactions.empty:
+        return interactions
+    
     mask = interactions['action'] == action_name
+
+    if not mask.any():
+        return interactions
+    
     df = interactions.loc[mask].copy()
     temp_info_df = pd.DataFrame(df['info'].tolist(), index=df.index)
 
     df['content_ids'] = temp_info_df.get('content_ids', pd.Series("", index=df.index)).astype(str)
 
     df = df[df['content_ids'] != '']
+
+    if df.empty:
+        return interactions
 
     df['product_id'] = df['content_ids'].str.strip(',').str.split(',')
 
@@ -512,10 +570,24 @@ def manipulate_action_with_content_ids(interactions: pd.DataFrame, action_name: 
     return interactions
 
 def manipulate_action_with_product_id(interactions: pd.DataFrame, action_name: str):
+    """
+    Process actions that have direct product_id (like add_to_cart, content_view)
+    These have a single product ID per interaction
+    """
+    if interactions is None or interactions.empty:
+        return interactions
+    
     mask = interactions['action'] == action_name
+
+    if not mask.any():
+        return interactions
+    
     info = interactions.loc[mask, 'info'].tolist()
     temp_info_df = pd.DataFrame(info, index=interactions.loc[mask].index)
+
     interactions.loc[mask, 'product_id'] = temp_info_df['id']
+
+    return interactions
 
 def get_products_from_external_api():
     now = pd.Timestamp.now()
