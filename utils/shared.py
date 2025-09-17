@@ -13,6 +13,7 @@ from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
 import io
+import time
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -405,46 +406,54 @@ def get_interactions_from_external_api():
         f"&order_by=id&order_by_type=desc"
     )
     
-    limit_from = 0
     limit_range = 10000
 
     events = ['add_to_cart', 'initiate_checkout', 'purchase', 'add_to_wishlist', 'content_view']
+    # Keep independent pagination state per event to avoid redundant calls once an event is exhausted
+    event_state = {event: {"offset": 0, "done": False} for event in events}
 
-    one_year_ago = datetime.utcnow() - timedelta(days=10)
+    one_year_ago = datetime.utcnow() - timedelta(days=60)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
     all_activities = []  # Will hold dicts from each batch
 
-    while True:
-        all_empty = True  # Will track if all events returned empty batches this iteration
-
+    # Continue until every event is marked done
+    while any(not s["done"] for s in event_state.values()):
         for event in events:
-            sb.append(f"Event: {event}. Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
-            print(f"Event: {event}. Fetching raw data from: {limit_from} to: {limit_from + limit_range}\n")
+            state = event_state[event]
+            if state["done"]:
+                continue
+
+            start = state["offset"]
+            end = start + limit_range
+            sb.append(f"Event: {event}. Fetching raw data from: {start} to: {end}\n")
+            print(f"Event: {event}. Fetching raw data from: {start} to: {end}\n")
 
             url = (
                 f"{base_url}"
                 f"&date_filter_from={one_year_ago_unix_timestamp}"
                 f"&event={event}"
-                f"&limit={limit_from},{limit_range}"
+                f"&limit={start},{limit_range}"
             )
 
             response = requests.get(url, headers=EXTERNAL_API_HEADERS)
 
-            if response.status_code == 200:
-                json_payload = response.json()
-                data_section = json_payload.get("data", {})
-                batch_activities = data_section.get("activities", []) if data_section else []
-
-                if batch_activities != []:
-                    all_activities.extend(batch_activities)
-                    all_empty = False # At least one event had data this iteration
-            else:
+            if response.status_code != 200:
                 raise BusinessException(f"External CB request failed: {response}.\n")
-        if all_empty:
-            break # All events returned empty lists, stop fetching more
 
-        limit_from = limit_from + limit_range
+            json_payload = response.json()
+            data_section = json_payload.get("data", {})
+            batch_activities = data_section.get("activities", []) if data_section else []
+
+            if batch_activities == []:
+                # No more data for this event; mark as done
+                state["done"] = True
+                continue
+
+            all_activities.extend(batch_activities)
+            state["offset"] = end
+            # Tiny delay to avoid hammering the API
+            time.sleep(0.1)
 
     if not all_activities:
         raise BusinessException("Interactions are required.")
