@@ -67,7 +67,6 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     adjust_raw_data(raw_interactions, raw_products)
     
     sb.append('\nOutlier detection\n')
-    
     outlierConfig = OutlierDetectionConfig()
     raw_interactions, outlier_stats = outlier_detection(raw_interactions, outlierConfig)
     sb.append(get_outlier_detection_summary(outlier_stats, outlierConfig))
@@ -88,28 +87,11 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     sb.append(f'Grouped interactions of same users and products count: {len(grouped_interactions)}\n')
 
-    # Filter users with interaction threshold
+    # Filter users and products with interaction threshold
     user_interaction_counts = grouped_interactions.groupby(USER_COL_NAME, observed=True)['interaction_count'].sum()
-    valid_users = user_interaction_counts[user_interaction_counts >= 2].index
-    sb.append(f'Users: {len(user_interaction_counts)} total; {len(valid_users)} after filtering; {len(user_interaction_counts) - len(valid_users)} filtered out\n')
-    
-    # Filter products with interaction threshold
     product_interaction_counts = grouped_interactions.groupby(PRODUCT_COL_NAME, observed=True)['interaction_count'].sum()
-    valid_products = product_interaction_counts[product_interaction_counts >= 4].index
-    sb.append(f'Products: {len(product_interaction_counts)} total; {len(valid_products)} after filtering; {len(product_interaction_counts) - len(valid_products)} filtered out\n')
-    
-    # Apply filters to grouped_interactions
-    filtered_interactions = grouped_interactions[
-        (grouped_interactions[USER_COL_NAME].isin(valid_users)) &
-        (grouped_interactions[PRODUCT_COL_NAME].isin(valid_products))
-    ].copy()
-    
-    # Remove unused categories after filtering
-    filtered_interactions[USER_COL_NAME] = filtered_interactions[USER_COL_NAME].cat.remove_unused_categories()
-    filtered_interactions[PRODUCT_COL_NAME] = filtered_interactions[PRODUCT_COL_NAME].cat.remove_unused_categories()
-    
-    sb.append(f'Interactions after filtering: {len(filtered_interactions)}\n')
-    sb.append(f'Interactions filtered out: {len(grouped_interactions) - len(filtered_interactions)}\n')
+
+    filtered_interactions = get_threshold_filtered_interactions(grouped_interactions, user_interaction_counts, product_interaction_counts, sb)
 
     product_idx = filtered_interactions[PRODUCT_COL_NAME].cat.codes
     user_idx = filtered_interactions[USER_COL_NAME].cat.codes
@@ -209,45 +191,26 @@ def get_cross_sell_interaction_values(raw_interactions: pd.DataFrame, raw_produc
 
     adjust_raw_data(raw_interactions, raw_products)
     
-    # Outlier detection
     sb.append('\nOutlier detection\n')
-    raw_interactions, outlier_stats = outlier_detection(raw_interactions, OutlierDetectionConfig())
-    sb.append(get_outlier_detection_summary(outlier_stats))
+    outlierConfig = OutlierDetectionConfig()
+    raw_interactions, outlier_stats = outlier_detection(raw_interactions, outlierConfig)
+    sb.append(get_outlier_detection_summary(outlier_stats, outlierConfig))
     sb.append('\n')
 
     raw_interactions[TIMESTAMP_COL_NAME] = pd.to_datetime(raw_interactions[TIMESTAMP_COL_NAME], unit='s')
 
-    # Filter users with interaction threshold
+    # Filter users and products with interaction threshold
     user_interaction_counts = raw_interactions.groupby(USER_COL_NAME, observed=True).size()
-    valid_users = user_interaction_counts[user_interaction_counts >= 3].index
-    sb.append(f'Users before filtering: {len(user_interaction_counts)}\n')
-    sb.append(f'Users after threshold filtering: {len(valid_users)}\n')
-    sb.append(f'Users filtered out: {len(user_interaction_counts) - len(valid_users)}\n')
-    
-    # Filter products with interaction threshold
     product_interaction_counts = raw_interactions.groupby(PRODUCT_COL_NAME, observed=True).size()
-    valid_products = product_interaction_counts[product_interaction_counts >= 5].index
-    sb.append(f'Products before filtering: {len(product_interaction_counts)}\n')
-    sb.append(f'Products after threshold filtering: {len(valid_products)}\n')
-    sb.append(f'Products filtered out: {len(product_interaction_counts) - len(valid_products)}\n')
-    
-    # Apply filters to raw_interactions
-    filtered_interactions = raw_interactions[
-        (raw_interactions[USER_COL_NAME].isin(valid_users)) &
-        (raw_interactions[PRODUCT_COL_NAME].isin(valid_products))
-    ].copy()
-    
-    # Remove unused categories after filtering
-    filtered_interactions[USER_COL_NAME] = filtered_interactions[USER_COL_NAME].cat.remove_unused_categories()
-    filtered_interactions[PRODUCT_COL_NAME] = filtered_interactions[PRODUCT_COL_NAME].cat.remove_unused_categories()
-    
-    sb.append(f'Interactions after filtering: {len(filtered_interactions)}\n')
-    sb.append(f'Interactions filtered out: {len(raw_interactions) - len(filtered_interactions)}\n')
+    filtered_interactions = get_threshold_filtered_interactions(raw_interactions, user_interaction_counts, product_interaction_counts, sb)
 
     product_product_dataframe = get_product_product_dataframe(filtered_interactions)
 
+    # product_product_dataframe.to_csv('../data/product_product.csv', index=False)
+    # raise Exception()
+
     if product_product_dataframe.empty:
-        raise BusinessException(f'There is no interactions between any of the products within the same user in one {SESSION_HOURS} h session period.')
+        raise BusinessException(f'There is no interactions between any of the products within the same user in one {SESSION_HOURS}h session period.')
 
     product_to_recommend_idx = product_product_dataframe[PRODUCT_TO_RECOMMEND_COL_NAME].cat.codes
     product_for_recommendation_idx = product_product_dataframe[PRODUCT_FOR_RECOMMENDATION_COL_NAME].cat.codes
@@ -330,9 +293,7 @@ def get_interaction_weights(merged_interactions: pd.DataFrame) -> np.ndarray:
     weights = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_WEIGHTS).values
     decay_scales = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_DECAY_SCALES).values
 
-    # Apply interaction-specific decay rates for cross-sell recommendations
-    # Using linear decay (not quadratic) for consistency with homepage recommendations
-    decayed_weights = weights * np.exp(-days_diff / decay_scales)
+    decayed_weights = weights * np.exp(-((days_diff / decay_scales) ** 2)) # Faster reduce in first couple of days but as days increase reduce is getting slower and slower
     return decayed_weights
 
 #endregion
@@ -681,6 +642,34 @@ def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBui
     except Exception as ex:
         # Do not fail on logging issues
         processingLog.append(f"Failed building top-products interaction log: {ex}\n")
+
+def get_threshold_filtered_interactions(interactions: pd.DataFrame, user_interaction_counts: pd.DataFrame, product_interaction_counts: pd.DataFrame, processingLog: StringBuilder) -> pd.DataFrame:
+    valid_users, valid_products = get_users_and_products_above_interaction_threshold(user_interaction_counts, product_interaction_counts, processingLog)
+
+    # Apply filters to interactions
+    filtered_interactions = interactions[
+        (interactions[USER_COL_NAME].isin(valid_users)) &
+        (interactions[PRODUCT_COL_NAME].isin(valid_products))
+    ].copy()
+    
+    # Remove unused categories after filtering
+    filtered_interactions[USER_COL_NAME] = filtered_interactions[USER_COL_NAME].cat.remove_unused_categories()
+    filtered_interactions[PRODUCT_COL_NAME] = filtered_interactions[PRODUCT_COL_NAME].cat.remove_unused_categories()
+    
+    processingLog.append(f'Interactions after threshold filtering: {len(filtered_interactions)}\n')
+
+    return filtered_interactions
+
+def get_users_and_products_above_interaction_threshold(user_interaction_counts: pd.DataFrame, product_interaction_counts: pd.DataFrame, processingLog: StringBuilder) -> tuple[pd.Index, pd.Index]:
+    # Filter users with interaction threshold
+    valid_users = user_interaction_counts[user_interaction_counts >= 2].index
+    processingLog.append(f'{len(valid_users)} after threshold filtering\n')
+    
+    # Filter products with interaction threshold
+    valid_products = product_interaction_counts[product_interaction_counts >= 4].index
+    processingLog.append(f'{len(valid_products)} after threshold filtering\n')
+
+    return valid_users, valid_products
 
 #endregion
 

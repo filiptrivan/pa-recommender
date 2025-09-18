@@ -22,9 +22,17 @@ TITLE_COL_NAME = 'title'
 
 #region Homepage And Similar Products Recommender
 
-HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-18870.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
-    port=18870,
+HOMEPAGE_RECOMMENDER_REDIS_A = redis.Redis(
+    host='redis-A.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
+    port=0,
+    decode_responses=True,
+    username=Settings().REDIS_USERNAME,
+    password=Settings().REDIS_PASSWORD
+)
+
+HOMEPAGE_RECOMMENDER_REDIS_B = redis.Redis(
+    host='redis-B.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
+    port=1,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().REDIS_PASSWORD
@@ -61,8 +69,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
 
     # calculate_training_loss needs to be true if we want to fit_callback work
-    # model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=15, calculate_training_loss=True) 
-    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=2.0, iterations=25, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=25, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -107,7 +114,7 @@ def save_homepage_recommendations(
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
 
-    redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
+    redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS_A.pipeline()
 
     try:
         redis_pipeline.set(name=TOP_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
@@ -177,129 +184,50 @@ CROSS_SELL_RECOMMENDER_REDIS = redis.Redis(
 )
 
 # We can not pass partial interactions because of timestamp updates
-def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame, enable_outlier_detection: bool = True, outlier_config_name: str = "ecommerce"):
-    sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products, enable_outlier_detection, outlier_config_name)
+def process_cross_sell_recommendation(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
+    sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation = shared.get_cross_sell_interaction_values(raw_interactions, raw_products)
 
-    # Use cosine similarity instead of ALS for cross-sell
-    save_cross_sell_recommendations_cosine(sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation)
+    save_cross_sell_recommendations(sparse_product_product_matrix, product_to_recommend_ids, products_for_recommendation)
 
-def cross_sell_train_model(sparse_user_product):
+def save_cross_sell_recommendations(sparse_product_product_matrix: csr_matrix, product_ids: pd.Index, products_for_recommendation: pd.DataFrame) -> dict:
     now = pd.Timestamp.now()
     sb = StringBuilder()
 
-    model = implicit.als.AlternatingLeastSquares(factors=32, regularization=0.01, alpha=1.0, iterations=25, calculate_training_loss=True) # calculate_training_loss needs to be true if we want to fit_callback work
-    model.fit_callback = store_loss(sb)
-    model.fit(sparse_user_product, show_progress=False)
-
-    sb.append(shared.get_duration_message(now))
-    Emailing().send_email_and_log_info("Cross sell model training", sb.__str__())
-
-    return model
-
-def save_cross_sell_recommendations(model: RecommenderBase, sparse_product_product_matrix: csr_matrix, product_to_recommend_ids: pd.Index, products_for_recommendation: pd.DataFrame) -> dict:
-    now = pd.Timestamp.now()
-    sb = StringBuilder()
-
-    product_to_recommend_ids = product_to_recommend_ids.tolist()
+    product_ids = product_ids.tolist()
     products_for_recommendation_ids = products_for_recommendation[ID_COL_NAME].tolist()
 
     product_indexes_to_filter = get_product_indexes_to_filter(products_for_recommendation)
     sb.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
-
-    recommendations_dict = defaultdict(list)
-
-    batch_size = 1000
-    to_generate = np.arange(len(product_to_recommend_ids))
     
-    redis_pipeline = CROSS_SELL_RECOMMENDER_REDIS.pipeline()
-
-    try:
-        for startidx in range(0, len(to_generate), batch_size):
-            batch = to_generate[startidx : startidx + batch_size]
-            product_for_recommendation_indexes, _ = model.recommend(batch, sparse_product_product_matrix[batch], filter_already_liked_items=False, filter_items=product_indexes_to_filter)
-            for i, product_to_recommend_index in enumerate(batch):
-                product_to_recommend_id = product_to_recommend_ids[product_to_recommend_index]
-                products_for_cross_sell = []
-                for product_index in product_for_recommendation_indexes[i]:
-                    product_id = products_for_recommendation_ids[product_index]
-                    if product_id != product_to_recommend_id: # Skip itself, we don't want to show itself
-                        products_for_cross_sell.append(product_id)
-                recommendations_dict[product_to_recommend_id] = products_for_cross_sell
-                # Persistant, because it's product to product interactions, for this we need the best data possible, we shouldn't retrain it in short period
-                redis_pipeline.set(name=product_to_recommend_id, value=json.dumps(products_for_cross_sell))
-        redis_pipeline.execute()
-    except Exception as ex:
-        redis_pipeline.reset()
-        raise ex
-    
-    test_product_for_cross_sell = Settings().TEST_PRODUCT_FOR_CROSS_SELL
-
-    if len(recommendations_dict[test_product_for_cross_sell]) == 0:
-        test_product_for_cross_sell = product_to_recommend_ids[0]
-    
-    test_recommendations_for_display = ', '.join([str(product_id) for product_id in recommendations_dict[test_product_for_cross_sell]])
-
-    sb.append(f"Top ten '{test_product_for_cross_sell}' recommendations: {test_recommendations_for_display}\n")
-
-    sb.append(shared.get_duration_message(now))
-    Emailing().send_email_and_log_info("Storing recommendations for cross sell", sb.__str__())
-
-    return recommendations_dict
-
-def save_cross_sell_recommendations_cosine(sparse_product_product_matrix: csr_matrix, product_to_recommend_ids: pd.Index, products_for_recommendation: pd.DataFrame) -> dict:
-    """
-    Save cross-sell recommendations using cosine similarity on product-product matrix.
-    This is more appropriate than ALS for cross-sell recommendations.
-    """
-    now = pd.Timestamp.now()
-    sb = StringBuilder()
-
-    product_to_recommend_ids = product_to_recommend_ids.tolist()
-    products_for_recommendation_ids = products_for_recommendation[ID_COL_NAME].tolist()
-
-    product_indexes_to_filter = get_product_indexes_to_filter(products_for_recommendation)
-    sb.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
-
-    # Calculate cosine similarity matrix
-    from sklearn.metrics.pairwise import cosine_similarity
-    similarity_matrix = cosine_similarity(sparse_product_product_matrix)
-    
-    # Set diagonal to 0 to avoid self-recommendations
-    np.fill_diagonal(similarity_matrix, 0)
-    
-    # Set filtered products to 0 similarity
-    for idx in product_indexes_to_filter:
-        if idx < similarity_matrix.shape[0]:
-            similarity_matrix[idx, :] = 0
-            similarity_matrix[:, idx] = 0
+    if not product_indexes_to_filter.empty:
+        sparse_product_product_matrix, products_for_recommendation_ids = remove_columns_which_index_is_in_product_indexes_to_filter(
+            sparse_product_product_matrix, 
+            product_indexes_to_filter, 
+            products_for_recommendation_ids
+        )
 
     recommendations_dict = defaultdict(list)
     
     redis_pipeline = CROSS_SELL_RECOMMENDER_REDIS.pipeline()
 
     try:
-        for i, product_to_recommend_id in enumerate(product_to_recommend_ids):
-            if i < similarity_matrix.shape[0]:
-                # Get top similar products
-                similar_indices = np.argsort(similarity_matrix[i])[::-1]
+        for i, product_id in enumerate(product_ids):
+            similarity_scores = sparse_product_product_matrix[i].toarray().ravel()
+
+            # Exclude the product itself and keep only scores > 0.1
+            mask = (similarity_scores > 0.1) & (np.array(products_for_recommendation_ids) != product_id)
+            valid_indices = np.where(mask)[0]
+
+            if valid_indices.size > 0:
+                top_indices = valid_indices[np.argsort(-similarity_scores[valid_indices])[:18]]
+                products_for_cross_sell = [products_for_recommendation_ids[idx] for idx in top_indices]
+            else:
                 products_for_cross_sell = []
-                
-                for similar_idx in similar_indices:
-                    if similar_idx < len(products_for_recommendation_ids):
-                        product_id = products_for_recommendation_ids[similar_idx]
-                        similarity_score = similarity_matrix[i, similar_idx]
-                        
-                        # Only include products with meaningful similarity
-                        if similarity_score > 0.1 and product_id != product_to_recommend_id:
-                            products_for_cross_sell.append(product_id)
-                            
-                        # Limit to top 20 recommendations
-                        if len(products_for_cross_sell) >= 20:
-                            break
-                
-                recommendations_dict[product_to_recommend_id] = products_for_cross_sell
-                # Persistent, because it's product to product interactions
-                redis_pipeline.set(name=product_to_recommend_id, value=json.dumps(products_for_cross_sell))
+
+            recommendations_dict[product_id] = products_for_cross_sell
+
+            # Persistent, because it's product to product interactions
+            redis_pipeline.set(name=product_id, value=json.dumps(products_for_cross_sell))
         
         redis_pipeline.execute()
     except Exception as ex:
@@ -309,7 +237,7 @@ def save_cross_sell_recommendations_cosine(sparse_product_product_matrix: csr_ma
     test_product_for_cross_sell = Settings().TEST_PRODUCT_FOR_CROSS_SELL
 
     if len(recommendations_dict[test_product_for_cross_sell]) == 0:
-        test_product_for_cross_sell = product_to_recommend_ids[0]
+        test_product_for_cross_sell = product_ids[0]
     
     test_recommendations_for_display = ', '.join([str(product_id) for product_id in recommendations_dict[test_product_for_cross_sell]])
 
@@ -319,6 +247,31 @@ def save_cross_sell_recommendations_cosine(sparse_product_product_matrix: csr_ma
     Emailing().send_email_and_log_info("Storing cross-sell recommendations using cosine similarity", sb.__str__())
 
     return recommendations_dict
+
+def remove_columns_which_index_is_in_product_indexes_to_filter(sparse_product_product_matrix: csr_matrix, product_indexes_to_filter: list, product_ids: list) -> tuple:
+    """
+    Remove columns from sparse matrix based on provided indexes.
+    Also removes corresponding product IDs.
+    Returns tuple of (filtered_matrix, filtered_product_ids).
+    """
+    indexes_to_remove = np.array(product_indexes_to_filter)
+    all_indexes = np.arange(sparse_product_product_matrix.shape[1])
+    
+    # Create boolean mask for indexes to keep
+    keep_mask = np.ones(len(all_indexes), dtype=bool)
+    keep_mask[indexes_to_remove] = False
+    
+    # Get indexes to keep using boolean indexing
+    indexes_to_keep = all_indexes[keep_mask]
+    
+    # Select only the columns we want to keep
+    filtered_matrix = sparse_product_product_matrix[:, indexes_to_keep]
+    
+    # Filter product IDs using the same boolean mask
+    product_ids_array = np.array(product_ids)
+    filtered_product_ids = product_ids_array[keep_mask].tolist()
+
+    return filtered_matrix, filtered_product_ids
 
 #endregion
 
