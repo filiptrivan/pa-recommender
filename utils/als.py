@@ -22,17 +22,9 @@ TITLE_COL_NAME = 'title'
 
 #region Homepage And Similar Products Recommender
 
-HOMEPAGE_RECOMMENDER_REDIS_A = redis.Redis(
+HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
     host='redis-A.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
     port=0,
-    decode_responses=True,
-    username=Settings().REDIS_USERNAME,
-    password=Settings().REDIS_PASSWORD
-)
-
-HOMEPAGE_RECOMMENDER_REDIS_B = redis.Redis(
-    host='redis-B.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
-    port=1,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().REDIS_PASSWORD
@@ -114,7 +106,7 @@ def save_homepage_recommendations(
     batch_size = 1000
     to_generate = np.arange(len(user_ids))
 
-    redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS_A.pipeline()
+    redis_pipeline = HOMEPAGE_RECOMMENDER_REDIS.pipeline()
 
     try:
         redis_pipeline.set(name=TOP_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
@@ -316,9 +308,9 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
     
     # Define parameter grid
     param_grid = {
-        'factors': [450, 550],
-        'regularization': [0.01],
-        'alpha': [130.0, 140.0],
+        'factors': [800, 900, 1000],
+        'regularization': [0.005],
+        'alpha': [300.0, 400.0, 500.0, 600.0],
         'iterations': [25]
     }
     
@@ -343,7 +335,7 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
                 regularization=params['regularization'],
                 alpha=params['alpha'],
                 iterations=params['iterations'],
-                calculate_training_loss=True  # Enable for early stopping
+                calculate_training_loss=True,  # Enable for early stopping
             )
             model.fit(train_matrix, show_progress=False)
             
@@ -358,9 +350,13 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
             ndcg_10 = ndcg_at_k(model, train_matrix, test_matrix, K=10, show_progress=False, num_threads=1)
             
             # Calculate composite score using only official implicit.evaluation metrics
-            # Ben Fred's metrics are well-chosen for recommendation systems
-            composite_score = 0.3 * precision_10 + 0.25 * precision_5 + 0.2 * auc_10 + 0.15 * map_10 + 0.1 * ndcg_10
-            
+            composite_score = (
+                0.25 * precision_10 + 
+                0.20 * precision_5 + 
+                0.20 * auc_10 + 
+                0.20 * map_10 + 
+                0.15 * ndcg_10
+            )
             result = {
                 'params': params,
                 'precision@5': precision_5,

@@ -1,4 +1,5 @@
 from io import StringIO
+import pandas as pd
 import logging
 import warnings
 from utils.classes.Settings import Settings
@@ -63,27 +64,22 @@ def test_hyperparameter_optimization():
     Test endpoint for hyperparameter optimization.
     This is for testing purposes only - not used in production.
     """
-    try:
-        # Get sample data for testing
-        new_raw_interactions = shared.get_interactions_from_external_api()
-        new_raw_products = shared.get_products_from_external_api()
-        
-        # Get interaction values (this will use the current filtering)
-        sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(new_raw_interactions, new_raw_products)
-        
-        # Run hyperparameter optimization test
-        optimization_results = als.optimize_als_hyperparameters_test(sparse_user_product_matrix)
-        
-        return jsonify({
-            "message": "Hyperparameter optimization test completed",
-            "best_params": optimization_results['best_params'],
-            "best_score": optimization_results['best_score'],
-            "test_info": optimization_results['test_info']
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Hyperparameter optimization test failed: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+    # Get sample data for testing
+    raw_interactions = pd.read_csv('../data/filtered_interactions.csv')
+    raw_products = shared.get_products_from_external_api()
+    
+    # Get interaction values (this will use the current filtering)
+    sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
+    
+    # Run hyperparameter optimization test
+    optimization_results = als.optimize_als_hyperparameters_test(sparse_user_product_matrix)
+    
+    return jsonify({
+        "message": "Hyperparameter optimization test completed",
+        "best_params": optimization_results['best_params'],
+        "best_score": optimization_results['best_score'],
+        "test_info": optimization_results['test_info']
+    }), 200
 
 if __name__ == '__main__':
     app.run()

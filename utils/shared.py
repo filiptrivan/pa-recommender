@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from utils.outlier_detection import outlier_detection, get_outlier_detection_summary
 from utils.outlier_config import OutlierDetectionConfig
+from implicit.nearest_neighbours import bm25_weight
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +44,12 @@ INTERACTION_WEIGHTS = {
 }
 
 # Adjust to fine-tune how quickly the weight drops. A smaller value will lead to a very steep drop, while a larger value will make the decay more gradual.
-INTERACTION_DECAY_SCALES = {
-    'purchase': 30,           # Purchases stay relevant longer
-    'initiate_checkout': 20,  # Checkout attempts moderately relevant
-    'add_to_cart': 15,        # Cart additions decay faster
-    'add_to_wishlist': 10,    # Wishlist items decay quickly
-    'content_view': 5         # Views decay fastest
-}
+# By not weighting again metrics improved by 100%, we don't need to weight again if we already made different values for INTERACTION_WEIGHTS
+INTERACTION_DECAY_SCALE = 25
+
+# Interaction decay parameters for repeated user-product interactions
+# Controls how much each subsequent interaction with the same product is weighted down
+INTERACTION_REPEAT_DECAY_FACTOR = 0.8  # Each repeat interaction gets 80% of previous weight
 
 EXTERNAL_API_HEADERS = {
     "Authorization": f"Bearer {Settings().BEARER_TOKEN}"
@@ -85,6 +85,8 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         interaction_count=('individual_rating', 'count')
     ).reset_index()
 
+    grouped_interactions = apply_interaction_repeat_decay(grouped_interactions)
+
     sb.append(f'Grouped interactions of same users and products count: {len(grouped_interactions)}\n')
 
     # Filter users and products with interaction threshold
@@ -96,9 +98,11 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     product_idx = filtered_interactions[PRODUCT_COL_NAME].cat.codes
     user_idx = filtered_interactions[USER_COL_NAME].cat.codes
 
-    clean_sparse_interactions = csr_matrix(
-        (filtered_interactions['total_rating'], (user_idx, product_idx))
+    sparse_product_user_matrix = csr_matrix(
+        (filtered_interactions['total_rating'], (product_idx, user_idx))
     )
+
+    sparse_user_product_matrix = bm25_weight(sparse_product_user_matrix, K1=100, B=0.8).T.tocsr()
 
     product_ids = filtered_interactions[PRODUCT_COL_NAME].cat.categories
     user_ids = filtered_interactions[USER_COL_NAME].cat.categories
@@ -132,7 +136,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         html=False
     )
 
-    return clean_sparse_interactions, user_ids.astype(str), products
+    return sparse_user_product_matrix, user_ids.astype(str), products
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
 def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.DataFrame) -> pd.Series:
@@ -143,33 +147,19 @@ def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.
         raise ValueError("The timestamp is in the future. Please provide a valid past timestamp.")
 
     weights = raw_interactions[INTERACTION_COL_NAME].map(INTERACTION_WEIGHTS)
-    decay_scales = raw_interactions[INTERACTION_COL_NAME].map(INTERACTION_DECAY_SCALES)
 
     if weights.isnull().any():
         raise ValueError("Interaction value doesn't exist (valid: Bought, PutInCart, PutInFavorites, Clicked).")
-    
-    if decay_scales.isnull().any():
-        raise ValueError("Interaction decay scale doesn't exist for all interaction types.")
 
     # Apply interaction-specific decay rates
     # Each interaction type has its own decay scale for more nuanced recency modeling
-    decayed_weights = weights * np.exp(-diff_days / decay_scales)
+    decayed_weights = weights * np.exp(-diff_days / INTERACTION_DECAY_SCALE)
     return decayed_weights
 
-def bm25_weight(X, K1=2.0, B=0.25):
-    """BM25 weighting for sparse user-item matrix"""
-    X = coo_matrix(X, copy=True)
-    
-    N = float(X.shape[0])  # total users
-    df = np.bincount(X.col)  # number of users per product
-    idf = np.log((N - df + 0.5) / (df + 0.5))
-    
-    col_sums = np.ravel(X.sum(axis=0))
-    avg_len = col_sums.mean()
-    length_norm = (1 - B) + B * col_sums / avg_len
-    
-    X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.col] + X.data) * idf[X.col]
-    return X.tocsr()
+def apply_interaction_repeat_decay(raw_interactions: pd.DataFrame):
+    decay_multiplier = INTERACTION_REPEAT_DECAY_FACTOR ** (raw_interactions['interaction_count'] - 1)
+    raw_interactions['total_rating'] = raw_interactions['total_rating'] * decay_multiplier
+    return raw_interactions
 
 #endregion
 
@@ -291,9 +281,8 @@ def get_interaction_weights(merged_interactions: pd.DataFrame) -> np.ndarray:
     days_diff = seconds_diff / 86400.0
 
     weights = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_WEIGHTS).values
-    decay_scales = merged_interactions[f"{INTERACTION_COL_NAME}{RIGHT_SUFFIX}"].map(INTERACTION_DECAY_SCALES).values
 
-    decayed_weights = weights * np.exp(-((days_diff / decay_scales) ** 2)) # Faster reduce in first couple of days but as days increase reduce is getting slower and slower
+    decayed_weights = weights * np.exp(-((days_diff / INTERACTION_DECAY_SCALE) ** 2)) # Faster reduce in first couple of days but as days increase reduce is getting slower and slower
     return decayed_weights
 
 #endregion
@@ -624,7 +613,6 @@ def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBui
                 timestamps_dt = pd.to_datetime(product_rows[TIMESTAMP_COL_NAME], unit='s')
                 days_ago = (now - timestamps_dt) / np.timedelta64(1, 'D')
                 base_weight = product_rows[INTERACTION_COL_NAME].map(INTERACTION_WEIGHTS)
-                decay_scale = product_rows[INTERACTION_COL_NAME].map(INTERACTION_DECAY_SCALES)
                 decayed = product_rows['individual_rating']
 
                 # Sort newest first for readability
@@ -637,7 +625,7 @@ def log_top_10_products(raw_interactions: pd.DataFrame, processingLog: StringBui
                     processingLog.append(
                         f"  - user={uid}, action={action}, created={created_iso}, "
                         f"base_weight={base_weight.at[idx]:.3f}, days_ago={days_ago.at[idx]:.2f}, "
-                        f"decay_scale={decay_scale.at[idx]:.2f}, decayed_rating={decayed.at[idx]:.6f}\n"
+                        f"decay_scale={INTERACTION_DECAY_SCALE:.2f}, decayed_rating={decayed.at[idx]:.6f}\n"
                     )
     except Exception as ex:
         # Do not fail on logging issues
@@ -662,11 +650,11 @@ def get_threshold_filtered_interactions(interactions: pd.DataFrame, user_interac
 
 def get_users_and_products_above_interaction_threshold(user_interaction_counts: pd.DataFrame, product_interaction_counts: pd.DataFrame, processingLog: StringBuilder) -> tuple[pd.Index, pd.Index]:
     # Filter users with interaction threshold
-    valid_users = user_interaction_counts[user_interaction_counts >= 2].index
+    valid_users = user_interaction_counts[user_interaction_counts > 2].index
     processingLog.append(f'{len(valid_users)} after threshold filtering\n')
     
     # Filter products with interaction threshold
-    valid_products = product_interaction_counts[product_interaction_counts >= 4].index
+    valid_products = product_interaction_counts[product_interaction_counts > 4].index
     processingLog.append(f'{len(valid_products)} after threshold filtering\n')
 
     return valid_users, valid_products
