@@ -66,6 +66,7 @@ def test_hyperparameter_optimization():
     """
     # Get sample data for testing
     raw_interactions = pd.read_csv('../data/filtered_interactions.csv')
+    # raw_interactions = shared.get_interactions_from_external_api()
     raw_products = shared.get_products_from_external_api()
     
     # Get interaction values (this will use the current filtering)

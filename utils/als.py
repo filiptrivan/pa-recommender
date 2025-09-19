@@ -23,8 +23,8 @@ TITLE_COL_NAME = 'title'
 #region Homepage And Similar Products Recommender
 
 HOMEPAGE_RECOMMENDER_REDIS = redis.Redis(
-    host='redis-A.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
-    port=0,
+    host='redis-18870.crce198.eu-central-1-3.ec2.redns.redis-cloud.com',
+    port=18870,
     decode_responses=True,
     username=Settings().REDIS_USERNAME,
     password=Settings().REDIS_PASSWORD
@@ -61,7 +61,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
     # regularization penalize too high interactions, we don't need it too high because in the data preparation we thought about this
 
     # calculate_training_loss needs to be true if we want to fit_callback work
-    model = implicit.als.AlternatingLeastSquares(factors=550, regularization=0.01, alpha=140.0, iterations=25, calculate_training_loss=True) 
+    model = implicit.als.AlternatingLeastSquares(factors=800, regularization=0.005, alpha=800.0, iterations=35, calculate_training_loss=True) 
     model.fit_callback = store_loss(sb)
     model.fit(sparse_user_product, show_progress=False)
 
@@ -308,9 +308,9 @@ def optimize_als_hyperparameters_test(sparse_user_product_matrix, test_size=0.2,
     
     # Define parameter grid
     param_grid = {
-        'factors': [800, 900, 1000],
+        'factors': [800],
         'regularization': [0.005],
-        'alpha': [300.0, 400.0, 500.0, 600.0],
+        'alpha': [800.0],
         'iterations': [25]
     }
     

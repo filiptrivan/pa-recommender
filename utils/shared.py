@@ -477,8 +477,8 @@ def get_filtered_interactions(activities_df):
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'purchase')
     filtered_interactions = manipulate_action_with_content_ids(filtered_interactions, 'add_to_wishlist')
 
-    manipulate_action_with_product_id(filtered_interactions, 'add_to_cart')
-    manipulate_action_with_product_id(filtered_interactions, 'content_view')
+    filtered_interactions = manipulate_action_with_product_id(filtered_interactions, 'add_to_cart')
+    filtered_interactions = manipulate_action_with_product_id(filtered_interactions, 'content_view')
 
     filtered_interactions = filtered_interactions[
         (filtered_interactions['product_id'].notnull()) & 
@@ -537,6 +537,16 @@ def manipulate_action_with_product_id(interactions: pd.DataFrame, action_name: s
 
     interactions.loc[mask, 'product_id'] = temp_info_df['id']
 
+    # Handle content_view specific filtering
+    if action_name == 'content_view':
+        # Find rows where referrer is missing
+        missing_referrer_mask = temp_info_df['referrer'].isna()
+        
+        if missing_referrer_mask.any():
+            indices_to_drop = temp_info_df.index[missing_referrer_mask]
+            interactions = interactions.drop(indices_to_drop)
+            print(f"Dropped {len(indices_to_drop)} content_view rows with missing referrer")
+        
     return interactions
 
 def get_products_from_external_api():
