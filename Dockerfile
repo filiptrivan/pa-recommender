@@ -62,6 +62,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Test import
+RUN python -c "from utils import als; print('utils.als imported successfully!')"
 RUN python -c "import implicit; print('Implicit imported successfully')"
 
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 1 --timeout 0 app:app
