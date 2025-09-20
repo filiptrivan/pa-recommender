@@ -1,10 +1,12 @@
+import os; 
+print(f"PWD: {os.getcwd()}, FILES: {os.listdir('.')}")
 from io import StringIO
 import pandas as pd
 import logging
 import warnings
 from utils.classes.Settings import Settings
 warnings.simplefilter(action='ignore', category=FutureWarning)
-import os
+# import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 from utils import als
 from utils import shared
