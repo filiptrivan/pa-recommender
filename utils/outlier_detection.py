@@ -7,6 +7,7 @@ recommendation quality, such as bot behavior, random clicking, and suspicious us
 
 import pandas as pd
 from typing import Tuple, Dict
+from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.outlier_config import OutlierDetectionConfig
 
@@ -70,7 +71,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     ]['user_uid'].unique()
     
     outlier_stats['high_frequency_users'] = len(high_freq_users)
-    if len(high_freq_users) > 0:
+    if (len(high_freq_users) > 0) & Settings().ENV == 'Dev':
         outlier_stats['high_frequency_users_details'] = get_top_10_high_freq_users_details(interactions, high_freq_users, user_daily_counts, config.max_user_interactions_per_day)
 
     # Combine all outlier users

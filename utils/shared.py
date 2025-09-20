@@ -9,6 +9,7 @@ import requests
 import pandas as pd
 import numpy as np
 from exceptions.BusinessException import BusinessException
+from utils import data
 from utils.classes.Settings import Settings
 from utils.classes.StringBuilder import StringBuilder
 from utils.emailing import Emailing
@@ -73,7 +74,8 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
 
     raw_interactions['individual_rating'] = get_ratings_column_based_on_recency(now, raw_interactions)
 
-    log_top_10_products(raw_interactions, sb, now)
+    # if Settings().ENV == 'Dev':
+    #     log_top_10_products(raw_interactions, sb, now)
 
     # Sorted by product_id
     grouped_interactions = raw_interactions.groupby(
@@ -120,20 +122,10 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
     default_values = { STOCK_COL_NAME: 0, STATUS_COL_NAME: 'Draft', TITLE_COL_NAME: 'Unknown Title' }
     products.fillna(value=default_values, inplace=True)
 
-    # Build and attach PNG histogram image for email
-    try:
-        png_bytes = build_product_interaction_histogram_png(raw_interactions)
-        attachments = [("product_interactions_hist.png", png_bytes, "image/png")]
-    except Exception as ex:
-        attachments = None
-        sb.append(f"Failed to build histogram PNG: {ex}\n")
-
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info(
         "Homepage and similar products recommender data cleaning",
         sb.__str__(),
-        attachments=attachments,
-        html=False
     )
 
     return sparse_bm25_user_product_matrix, sparse_user_product_matrix, user_ids.astype(str), products
@@ -385,13 +377,11 @@ def get_interactions_from_external_api():
     one_year_ago = datetime.utcnow() - timedelta(days=100)
     one_year_ago_unix_timestamp = int(one_year_ago.timestamp())
 
-    data_dir = '../data'
-    cache_path = os.path.join(data_dir, 'filtered_interactions.csv')
-
+    interactions_cache_file_name = 'interactions.csv'
     # Load existing filtered interactions from cache
     existing_interactions = pd.DataFrame()
     try:
-        existing_interactions = pd.read_csv(cache_path)
+        existing_interactions = data.load_df_from_azure(interactions_cache_file_name)
         if not existing_interactions.empty:
             # Keep only last year
             existing_interactions = existing_interactions.loc[existing_interactions['created'] >= one_year_ago_unix_timestamp]
@@ -463,9 +453,8 @@ def get_interactions_from_external_api():
         raise BusinessException("Interactions are required.")
 
     # Save cache
-    os.makedirs(data_dir, exist_ok=True)
-    all_filtered_interactions.to_csv(cache_path, index=False)
-    sb.append(f"Cache updated with {len(all_filtered_interactions)} filtered interactions.\n")
+    data.save_csv_to_azure(interactions_cache_file_name, all_filtered_interactions)
+    sb.append(f"Cache rewritten with {len(all_filtered_interactions)} filtered interactions.\n")
 
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Getting interactions from CB API", sb.__str__())

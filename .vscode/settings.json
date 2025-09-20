@@ -29,5 +29,7 @@
         "env.bak{,/**}",
         "venv.bak{,/**}",
         ".vscode{,/**}"
-    ]
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/d34f191b-3e1d-4799-931a-6467597a9670/resourceGroups/pa-recommender/providers/Microsoft.Web/sites/pa-recommender",
+    "appService.deploySubpath": "."
 }
