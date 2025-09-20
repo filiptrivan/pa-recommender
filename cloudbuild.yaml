@@ -1,15 +1,19 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'build',
-        '-t',
-        'gcr.io/$PROJECT_ID/$REPO_NAME:$COMMIT_SHA',
-        '.'
-      ]
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/pa-recommender:latest',
+      '.'
+    ]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      'gcr.io/$PROJECT_ID/pa-recommender:latest'
+    ]
 
 images:
-  - 'gcr.io/$PROJECT_ID/$REPO_NAME:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/pa-recommender:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
