@@ -25,20 +25,27 @@
 # CMD ["gunicorn", "-b", ":8080", "app:app"]
 FROM ubuntu:22.04
 
+# Set non-interactive mode for apt
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install Python and dependencies
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
+    python3.11-distutils \
     python3-pip \
     libgomp1 \
     libomp-dev \
     gcc \
     g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlinks for python commands
-RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
-    ln -s /usr/bin/python3.11 /usr/bin/python3
+# Only create python symlink (python3 already exists)
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip
 
 ENV OMP_NUM_THREADS=1
 ENV PYTHONUNBUFFERED=1
@@ -47,10 +54,14 @@ WORKDIR /app
 
 COPY requirements.txt .
 
+# Install dependencies
 RUN pip install --no-cache-dir numpy cython
 RUN pip install --no-cache-dir --no-binary=implicit implicit
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Test import
+RUN python -c "import implicit; print('Implicit imported successfully')"
 
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 1 --timeout 0 app:app
