@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from utils.outlier_detection import outlier_detection, get_outlier_detection_summary
 from utils.outlier_config import OutlierDetectionConfig
-from implicit.nearest_neighbours import bm25_weight
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +101,8 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         (filtered_interactions['total_rating'], (product_idx, user_idx))
     )
 
-    sparse_user_product_matrix = bm25_weight(sparse_product_user_matrix, K1=100, B=0.8).T.tocsr()
+    sparse_user_product_matrix = sparse_product_user_matrix.T.tocsr()
+    sparse_bm25_user_product_matrix = bm25_weight(sparse_product_user_matrix, K1=1.2, B=0.3).T.tocsr()
 
     product_ids = filtered_interactions[PRODUCT_COL_NAME].cat.categories
     user_ids = filtered_interactions[USER_COL_NAME].cat.categories
@@ -136,7 +136,7 @@ def get_homepage_and_similar_products_interaction_values(raw_interactions: pd.Da
         html=False
     )
 
-    return sparse_user_product_matrix, user_ids.astype(str), products
+    return sparse_bm25_user_product_matrix, sparse_user_product_matrix, user_ids.astype(str), products
 
 # User worked 5 years for one company and was buying only one group of products, now he changed the company and want to buy other group of products, with this function we are forgetting previous interaction
 def get_ratings_column_based_on_recency(now: pd.Timestamp, raw_interactions: pd.DataFrame) -> pd.Series:
@@ -160,6 +160,25 @@ def apply_interaction_repeat_decay(raw_interactions: pd.DataFrame):
     decay_multiplier = INTERACTION_REPEAT_DECAY_FACTOR ** (raw_interactions['interaction_count'] - 1)
     raw_interactions['total_rating'] = raw_interactions['total_rating'] * decay_multiplier
     return raw_interactions
+
+def bm25_weight(X, K1=100, B=0.8):
+    """Weighs each row of a sparse matrix X  by BM25 weighting"""
+    # calculate idf per term (user)
+    X = coo_matrix(X)
+
+    N = float(X.shape[0])
+    df = np.bincount(X.col)
+    idf = np.log((N - df + 0.5) / (df + 0.5))
+    idf = np.maximum(idf, 0)
+
+    # calculate length_norm per document (artist)
+    row_sums = np.ravel(X.sum(axis=1))
+    average_length = row_sums.mean()
+    length_norm = (1.0 - B) + B * row_sums / average_length
+
+    # weight matrix rows by bm25
+    X.data = X.data * (K1 + 1.0) / (K1 * length_norm[X.row] + X.data) * idf[X.col]
+    return X
 
 #endregion
 

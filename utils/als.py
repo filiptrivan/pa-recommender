@@ -35,11 +35,11 @@ HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION = 604800 # 7 days
 
 # We can not pass partial interactions because of timestamp updates
 def process_homepage_and_similar_products_recommendations(raw_interactions: pd.DataFrame, raw_products: pd.DataFrame):
-    sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
+    sparse_bm25_user_product_matrix, sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
 
-    model = homepage_and_similar_products_train_model(sparse_user_product_matrix)
+    model = homepage_and_similar_products_train_model(sparse_bm25_user_product_matrix)
 
-    save_homepage_and_similar_products_recommendations(model, sparse_user_product_matrix, user_ids, products)
+    save_homepage_and_similar_products_recommendations(model, sparse_user_product_matrix, sparse_bm25_user_product_matrix, user_ids, products)
 
 def homepage_and_similar_products_train_model(sparse_user_product):
     now = pd.Timestamp.now()
@@ -72,6 +72,7 @@ def homepage_and_similar_products_train_model(sparse_user_product):
 
 def save_homepage_and_similar_products_recommendations(
     model: RecommenderBase, 
+    sparse_bm25_user_product_matrix: csr_matrix,
     sparse_user_product_matrix: csr_matrix, 
     user_ids: pd.Index, 
     products: pd.DataFrame
@@ -83,13 +84,14 @@ def save_homepage_and_similar_products_recommendations(
     # processingLog.append(f"Product ids to filter: {', '.join(map(str, product_indexes_to_filter))}\n")
     processingLog.append(f'Products to filter count: {len(product_indexes_to_filter)}\n')
 
-    save_homepage_recommendations(model, sparse_user_product_matrix, user_ids, products, product_indexes_to_filter, processingLog)
+    save_homepage_recommendations(model, sparse_bm25_user_product_matrix, sparse_user_product_matrix, user_ids, products, product_indexes_to_filter, processingLog)
     
     processingLog.append(shared.get_duration_message(now))
     Emailing().send_email_and_log_info("Saving homepage and similar products recommendations", processingLog.__str__())
 
 def save_homepage_recommendations(
     model: RecommenderBase, 
+    sparse_bm25_user_product_matrix: csr_matrix,
     sparse_user_product_matrix: csr_matrix, 
     user_ids: pd.Index, 
     products: pd.DataFrame, 
@@ -112,7 +114,7 @@ def save_homepage_recommendations(
         redis_pipeline.set(name=TOP_OVERALL_RECOMMENDATIONS_KEY, ex=HOMEPAGE_RECOMMENDER_REDIS_KEY_EXPIRATION, value=json.dumps(recommendations_dict[TOP_OVERALL_RECOMMENDATIONS_KEY])) # ex=7 days
         for startidx in range(0, len(to_generate), batch_size):
             batch = to_generate[startidx : startidx + batch_size]
-            product_indexes, _ = model.recommend(userid=batch, user_items=sparse_user_product_matrix[batch], N=18, filter_already_liked_items=False, filter_items=product_indexes_to_filter)
+            product_indexes, _ = model.recommend(userid=batch, user_items=sparse_bm25_user_product_matrix[batch], N=18, filter_already_liked_items=False, filter_items=product_indexes_to_filter)
             for i, user_index in enumerate(batch):
                 user_id = user_ids[user_index] # Not casting here improved performance for 10 sec for 500k interactions
                 products_for_recommendation = []

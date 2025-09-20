@@ -70,10 +70,10 @@ def test_hyperparameter_optimization():
     raw_products = shared.get_products_from_external_api()
     
     # Get interaction values (this will use the current filtering)
-    sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
+    sparse_bm25_user_product_matrix, sparse_user_product_matrix, user_ids, products = shared.get_homepage_and_similar_products_interaction_values(raw_interactions, raw_products)
     
     # Run hyperparameter optimization test
-    optimization_results = als.optimize_als_hyperparameters_test(sparse_user_product_matrix)
+    optimization_results = als.optimize_als_hyperparameters_test(sparse_bm25_user_product_matrix)
     
     return jsonify({
         "message": "Hyperparameter optimization test completed",
