@@ -37,6 +37,10 @@ def handle_exception(ex):
 def hello_world():
     return "Hello, World!"
 
+@app.route('/health')
+def health_check():
+    return {'status': 'healthy', 'service': 'recommender'}, 200
+
 @app.route('/train_homepage_and_similar_products_model_by_http_request', methods=['GET'])
 @shared.require_api_key
 def train_homepage_and_similar_products_model_by_http_request():
