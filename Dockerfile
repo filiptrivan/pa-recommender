@@ -18,7 +18,7 @@ RUN echo "=== DEBUGGING LIBGOMP ===" && \
 ENV OMP_NUM_THREADS=1
 ENV PYTHONUNBUFFERED=1
 
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+ENV LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
 
 # Set the working directory
 WORKDIR /app
@@ -30,4 +30,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
-CMD ["gunicorn", "-b", ":8080", "app:app"]
+CMD exec gunicorn --bind :8080 --workers 1 --preload app:app

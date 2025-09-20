@@ -7,16 +7,16 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'gcr.io/$PROJECT_ID/pa-recommender']
 
-# # Deploy to Cloud Run
-# - name: 'gcr.io/cloud-builders/gcloud'
-#   args: [
-#     'run', 'deploy', 'pa-recommender',
-#     '--image', 'gcr.io/$PROJECT_ID/pa-recommender',
-#     '--region', 'us-central1',
-#     '--platform', 'managed',
-#     '--allow-unauthenticated',
-#     '--memory', '4Gi'
-#   ]
+# Deploy to Cloud Run
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: [
+    'run', 'deploy', 'pa-recommender',
+    '--image', 'gcr.io/$PROJECT_ID/pa-recommender',
+    '--region', 'europe-west8',
+    '--platform', 'managed',
+    '--allow-unauthenticated',
+    '--memory', '4Gi'
+  ]
 
 options:
   logging: CLOUD_LOGGING_ONLY
