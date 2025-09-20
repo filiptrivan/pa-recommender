@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
 ENV OMP_NUM_THREADS=1
 ENV PYTHONUNBUFFERED=1
 
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+
 # Set the working directory
 WORKDIR /app
 
