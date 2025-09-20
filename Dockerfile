@@ -9,7 +9,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory for your application.
-WORKDIR /
+WORKDIR /app
 
 # Copy your requirements file and install Python dependencies.
 COPY requirements.txt .
