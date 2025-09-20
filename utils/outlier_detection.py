@@ -71,7 +71,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     ]['user_uid'].unique()
     
     outlier_stats['high_frequency_users'] = len(high_freq_users)
-    if (len(high_freq_users) > 0) & Settings().ENV == 'Dev':
+    if len(high_freq_users) > 0 and Settings().ENV == 'Dev':
         outlier_stats['high_frequency_users_details'] = get_top_10_high_freq_users_details(interactions, high_freq_users, user_daily_counts, config.max_user_interactions_per_day)
 
     # Combine all outlier users
