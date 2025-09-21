@@ -65,6 +65,9 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
         'total_outlier_users': 0
     }
     
+    print("FT>>>>>> Columns in interactions:", interactions.columns)
+    print(interactions.head())
+    print(interactions.dtypes)
     user_daily_counts = interactions.groupby(['user_uid', 'date']).size().reset_index(name='daily_interactions')
     high_freq_users = user_daily_counts[
         user_daily_counts['daily_interactions'] > config.max_user_interactions_per_day

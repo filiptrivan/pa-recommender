@@ -6,9 +6,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ENV OMP_NUM_THREADS=1
-ENV PYTHONUNBUFFERED=1
-
-# ENV LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
 
 # Set the working directory
 WORKDIR /app
@@ -20,4 +17,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
-CMD exec gunicorn --bind :8080 --workers 1 --preload app:app
+CMD ["gunicorn", "-b", ":8080", "app:app"]

@@ -15,7 +15,8 @@ steps:
     '--region', 'europe-west8',
     '--platform', 'managed',
     '--allow-unauthenticated',
-    '--memory', '4Gi'
+    '--memory', '8GiB',
+    '--cpu', '2'
   ]
 
 options:
