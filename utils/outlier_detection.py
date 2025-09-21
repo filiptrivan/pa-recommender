@@ -54,10 +54,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     Returns:
         Tuple of (filtered_interactions, outlier_stats)
     """
-    # Convert timestamp to datetime
     interactions = interactions.copy()
-    interactions['created_dt'] = pd.to_datetime(interactions['created'], unit='s')
-    interactions['date'] = interactions['created_dt'].dt.date
     
     outlier_stats = {
         'high_frequency_users': 0,
@@ -65,15 +62,17 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
         'total_outlier_users': 0
     }
     
-    print("FT>>>>>> Columns in interactions:", interactions.columns)
-    print(interactions.head())
-    print(interactions.dtypes)
+    # Convert timestamp to datetime
+    interactions['created_dt'] = pd.to_datetime(interactions['created'], unit='s')
+    interactions['date'] = interactions['created_dt'].dt.date
+    
     user_daily_counts = interactions.groupby(['user_uid', 'date']).size().reset_index(name='daily_interactions')
-    high_freq_users = user_daily_counts[
-        user_daily_counts['daily_interactions'] > config.max_user_interactions_per_day
-    ]['user_uid'].unique()
+
+    high_freq_mask = user_daily_counts['daily_interactions'] > config.max_user_interactions_per_day
+    high_freq_users = user_daily_counts.loc[high_freq_mask, 'user_uid'].unique()
     
     outlier_stats['high_frequency_users'] = len(high_freq_users)
+
     if len(high_freq_users) > 0 and Settings().ENV == 'Dev':
         outlier_stats['high_frequency_users_details'] = get_top_10_high_freq_users_details(interactions, high_freq_users, user_daily_counts, config.max_user_interactions_per_day)
 
@@ -85,7 +84,7 @@ def detect_user_outliers(interactions: pd.DataFrame, config: OutlierDetectionCon
     
     # Filter out outlier users
     outlier_mask = interactions['user_uid'].isin(all_outlier_users)
-    filtered_interactions = interactions[~outlier_mask].copy()
+    filtered_interactions = interactions[~outlier_mask]
     
     # Remove temporary columns
     filtered_interactions = filtered_interactions.drop(['created_dt', 'date'], axis=1)
