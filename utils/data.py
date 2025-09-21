@@ -35,4 +35,4 @@ def save_csv_to_azure(file_name: str, df: pd.DataFrame):
     csv_buffer = io.StringIO()
     df.to_csv(csv_buffer, index=False)
     
-    blob_client.upload_blob(csv_buffer.getvalue(), overwrite=True)
+    blob_client.upload_blob(csv_buffer.getvalue(), overwrite=True, timeout=3600, max_concurrency=4)
