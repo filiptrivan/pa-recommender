@@ -598,9 +598,7 @@ def get_products_from_external_api():
     if not all_products:
         raise BusinessException("Products are required.")
 
-    new_raw_products = pd.DataFrame(all_products)
-
-    filtered_products = new_raw_products[['id', 'stock', 'status', 'title']].copy()
+    filtered_products = pd.DataFrame(all_products, columns=['id', 'stock', 'status', 'title'])
 
     sb.append(get_duration_message(now))
     Emailing().send_email_and_log_info("Getting products from CB API", sb.__str__())
