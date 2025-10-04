@@ -488,6 +488,11 @@ def get_filtered_interactions(activities_df):
     filtered_interactions = manipulate_action_with_product_id(filtered_interactions, 'add_to_cart')
     filtered_interactions = manipulate_action_with_product_id(filtered_interactions, 'content_view')
 
+    if 'product_id' not in filtered_interactions.columns:
+        print(f"Skipping batch, no product_id found. Actions in this batch: {filtered_interactions['action'].unique() if not filtered_interactions.empty else 'filtered_interactions is empty'}")
+        return pd.DataFrame()
+
+
     filtered_interactions = filtered_interactions[
         (filtered_interactions['product_id'].notnull()) & 
         (filtered_interactions['product_id'] != '') & 
