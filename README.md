@@ -92,3 +92,15 @@ Digging deeper uncovered:
 - Internal admin activity polluting the dataset
 
 Cleaning this noise improved results more than any hyperparameter tweak.
+
+### 9. Global Error Handling & Daily Reporting
+To make the pipeline more reliable, I added a simple global error-handling layer using Python and Flask.
+- All unhandled errors are caught by a global Flask error handler.
+- The handler formats the exception and stack trace and sends it directly to my email.
+- This lets me immediately know when the training or serving pipeline fails.
+
+I also added a small reporting script so that after each daily training run:
+
+- the training summary (metrics, counts, durations, etc.) is automatically sent by email to the business owner.
+
+This way both errors and daily results are delivered without needing to check logs or dashboards.
